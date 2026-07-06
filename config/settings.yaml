@@ -1,0 +1,17 @@
+sports:
+  - id: nba
+    label: NBA
+    database: data/databases/nba.db
+    csv_glob: data/raw/nba/*.csv
+  - id: nfl
+    label: NFL
+    database: data/databases/nfl.db
+    csv_glob: data/raw/nfl/*.csv
+  - id: nhl
+    label: NHL
+    database: data/databases/nhl.db
+    csv_glob: data/raw/nhl/*.csv
+
+schema_cache_dir: data/schema
+max_tool_rounds: 12
+max_sql_rows: 500

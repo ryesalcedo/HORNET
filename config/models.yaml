@@ -1,0 +1,19 @@
+# Ollama model names — pull these before first run:
+#   ollama pull qwen2.5-coder:32b
+#   ollama pull sqlcoder:7b
+#   ollama pull mathstral:7b
+
+orchestrator:
+  model: qwen2.5-coder:32b
+  temperature: 0.2
+  keep_alive: -1          # stay loaded for the session
+
+sql:
+  model: sqlcoder:7b
+  temperature: 0.0
+  keep_alive: -1
+
+stats:
+  model: mathstral:7b
+  temperature: 0.1
+  keep_alive: 5m          # unload after idle to save VRAM
