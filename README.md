@@ -25,8 +25,9 @@ Hub-and-spoke only — workers return structured JSON; the orchestrator narrates
 
 ## Quick start
 
+**No git?** Copy the project folder or use `python3 scripts/package_for_deploy.py` on your dev machine, move the `.tar.gz` to the target, then follow [REBUILD.md §3](REBUILD.md#3-get-the-code-no-git-clone-required).
+
 ```bash
-git clone https://github.com/SalcedoER/HORNET.git
 cd HORNET
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
@@ -36,7 +37,7 @@ ollama pull qwen2.5-coder:14b
 ollama pull sqlcoder:7b
 
 cp .env.example .env
-# Drop CSVs into data/raw/{nba,nfl,nhl}/
+# CSVs in data/raw/{nba,nfl,nhl}/ — copy separately if not in archive
 python scripts/import_csv.py
 
 hornet
@@ -48,6 +49,7 @@ In the REPL: `/schema` to confirm databases, then ask a question. Use `/trace` t
 
 See **[REBUILD.md](REBUILD.md)** for:
 
+- **Deploy without git** (copy folder, tarball, or ZIP)
 - Complete setup from scratch
 - Verifying databases are present
 - Scaling to 40 GB VRAM / larger models

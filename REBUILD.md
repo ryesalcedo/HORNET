@@ -52,14 +52,93 @@ Install on the host:
 
 ---
 
-## 3. Get the code
+## 3. Get the code (no `git clone` required)
+
+Many replicated environments block git or GitHub. Use **any** of these — git is optional.
+
+### Option A — Copy the folder (simplest)
+
+On the machine that already has HORNET, copy the whole project to the target:
+
+```bash
+# From source machine — pick one:
+
+# USB / shared drive: copy ~/Projects/HORNET to the new box
+
+# Same LAN (replace user@host and path):
+rsync -av --exclude '.venv' --exclude '__pycache__' --exclude '.git' \
+  ~/Projects/HORNET/ user@NEW_HOST:~/HORNET/
+
+scp -r ~/Projects/HORNET user@NEW_HOST:~/
+```
+
+On the **target** machine:
+
+```bash
+cd ~/HORNET
+```
+
+You do **not** need `.git`, `.venv`, or `data/databases/*.db` on the copy — those are recreated locally.
+
+### Option B — Portable archive (recommended for air-gapped / no git)
+
+On the **source** machine, build a deploy tarball:
+
+```bash
+cd ~/Projects/HORNET
+python3 scripts/package_for_deploy.py
+# writes ~/hornet-deploy-YYYYMMDD.tar.gz
+```
+
+Copy that single file to the target (USB, `scp`, shared folder, etc.), then:
+
+```bash
+tar -xzf hornet-deploy-YYYYMMDD.tar.gz
+cd HORNET
+```
+
+The archive includes source, config, scripts, and `data/raw/` CSVs if present. It **excludes** `.venv`, `.git`, and generated `.db` files (you rebuild databases on the target).
+
+### Option C — GitHub ZIP (browser only, no git CLI)
+
+If the target has a browser but no `git`:
+
+1. Open https://github.com/SalcedoER/HORNET
+2. **Code → Download ZIP**
+3. Unzip and `cd HORNET-main` (rename to `HORNET` if you like)
+
+Copy your CSVs into `data/raw/` separately if they were not in the repo.
+
+### Option D — `git clone` (optional)
+
+Only if git and network access to GitHub work:
 
 ```bash
 git clone https://github.com/SalcedoER/HORNET.git
 cd HORNET
 ```
 
-Or copy the project folder and initialize git locally.
+### What must exist on the target after copy
+
+```
+HORNET/
+├── hornet/           # Python package (required)
+├── config/           # models.yaml, settings.yaml (required)
+├── scripts/          # import_csv.py, etc. (required)
+├── pyproject.toml    # (required)
+├── .env.example      # (required)
+├── data/raw/         # your CSVs (required for import)
+└── README.md / REBUILD.md
+```
+
+**Not required on copy** (recreated on target):
+
+| Path | Recreated by |
+|------|----------------|
+| `.venv/` | `pip install -e .` |
+| `data/databases/*.db` | `python scripts/import_csv.py` |
+| `data/schema/*.json` | import script or startup |
+| `.git/` | optional |
 
 ---
 
@@ -498,29 +577,38 @@ HORNET/
 
 ---
 
-## 14. Quick rebuild checklist
+## 14. Quick rebuild checklist (no git)
+
+**On source machine** (once):
 
 ```bash
-# 1. Code + Python
-git clone https://github.com/SalcedoER/HORNET.git && cd HORNET
+cd ~/Projects/HORNET
+python3 scripts/package_for_deploy.py
+# copy ~/hornet-deploy-*.tar.gz to target (USB, scp, etc.)
+```
+
+**On target machine:**
+
+```bash
+tar -xzf hornet-deploy-*.tar.gz
+cd HORNET
+
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 2. Ollama + models
 export OLLAMA_MAX_LOADED_MODELS=1
 ollama pull qwen2.5-coder:14b && ollama pull sqlcoder:7b
 
-# 3. Config
 cp .env.example .env
 
-# 4. Data → databases
-# (copy CSVs into data/raw/{nba,nfl,nhl}/)
+# If CSVs not in the archive, copy them into data/raw/{nba,nfl,nhl}/
 python scripts/import_csv.py
 
-# 5. Verify
-ls data/databases/*.db
-hornet   # then /schema and ask a question
+ls data/databases/*.db    # should show nba.db nfl.db nhl.db
+hornet                    # /schema → all (ok)
 ```
+
+If you already copied the full folder with `rsync`/`scp` instead of a tarball, skip the `tar` step and `cd` into that folder.
 
 ---
 
