@@ -42,7 +42,13 @@ python scripts/import_csv.py   # builds databases from CSVs
 hornet
 ```
 
-**Making the zip (any PC with the project):** zip the `HORNET` folder, exclude `.venv` and `data/databases/`.
+**Making the zip (do not copy the raw folder — `.venv` is ~9,000 files):**
+
+```bash
+./scripts/make_copy_zip.sh ~/hornet.zip
+```
+
+Copy that one zip (~50 files inside), not the whole project directory.
 
 ## Example questions
 

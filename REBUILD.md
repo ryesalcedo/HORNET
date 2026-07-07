@@ -82,7 +82,17 @@ You only need a **ZIP file** on the new PC (USB stick, shared drive, etc.). No g
 
 ### Make the zip (any PC that has the project — one time)
 
-Right‑click the `HORNET` folder → **Compress**, or:
+> **Do not copy the whole folder as-is.** `.venv/` alone is ~9,000 files (~190 MB) and is recreated with `pip install` on the new machine.
+
+Right‑click is risky — use the script or zip command below so `.venv` is excluded.
+
+```bash
+cd ~/Projects/HORNET
+chmod +x scripts/make_copy_zip.sh
+./scripts/make_copy_zip.sh ~/hornet.zip
+```
+
+Or manually:
 
 ```bash
 cd ~/Projects
@@ -93,9 +103,9 @@ zip -r hornet.zip HORNET \
   -x "HORNET/data/databases/*"
 ```
 
-Tip: put your CSVs in `HORNET/data/raw/` before zipping so they travel with the code.
+A clean zip is **~50 files**, not 10,000. Put your CSVs in `data/raw/` before zipping if you want them included.
 
-Copy **`hornet.zip`** to the new machine.
+Copy **`hornet.zip`** to the new machine (one file on USB).
 
 ### On the blank machine
 
