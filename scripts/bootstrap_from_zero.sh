@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bootstrap HORNET on a blank Linux machine (no git, no existing copy).
-# Run AFTER you have the HORNET source tree in $INSTALL_DIR (see REBUILD.md §2).
+# Bootstrap HORNET on a blank Linux machine.
+# Prerequisite: unzip hornet.zip so $INSTALL_DIR contains pyproject.toml
 set -euo pipefail
 
 INSTALL_DIR="${1:-$HOME/HORNET}"
@@ -11,7 +11,7 @@ echo "Install dir: $INSTALL_DIR"
 
 if [[ ! -f "$INSTALL_DIR/pyproject.toml" ]]; then
   echo "ERROR: $INSTALL_DIR does not look like HORNET (missing pyproject.toml)."
-  echo "Get source first — see REBUILD.md section 2 (wget ZIP or unzip download)."
+  echo "Get source first: unzip hornet.zip (see REBUILD.md §2)."
   exit 1
 fi
 

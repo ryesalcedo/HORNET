@@ -19,32 +19,30 @@ User → PLAN → EXECUTE → ANALYZE → SYNTHESIZE → optional stats narrativ
 
 ## Build from absolute zero
 
-For a **blank machine** (no git, no existing copy): see **[REBUILD.md](REBUILD.md)**.
+For a **blank machine**: copy **`hornet.zip`** (USB / share) — no git, no download required for the code.
 
-Short version:
+See **[REBUILD.md](REBUILD.md)** for the full walkthrough.
 
 ```bash
-# System + Ollama
-sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3 curl unzip wget
+# 1. Unzip the folder you copied
+cd ~ && unzip hornet.zip && cd HORNET
+
+# 2. System (once)
+sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3 unzip
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Source (wget ZIP — no git)
-cd ~ && wget -O hornet.zip https://github.com/SalcedoER/HORNET/archive/refs/heads/master.zip
-unzip hornet.zip && mv HORNET-master HORNET && cd HORNET
-mkdir -p data/raw/{nba,nfl,nhl} data/databases data/schema
-
-# Your CSVs → data/raw/{nba,nfl,nhl}/
+# 3. CSVs in data/raw/{nba,nfl,nhl}/ (include in zip or copy separately)
 
 python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 export OLLAMA_MAX_LOADED_MODELS=1
 ollama pull qwen2.5-coder:14b && ollama pull sqlcoder:7b
 cp .env.example .env
 
-python scripts/import_csv.py   # builds data/databases/*.db from CSVs
-hornet                         # /schema → all (ok)
+python scripts/import_csv.py   # builds databases from CSVs
+hornet
 ```
 
-Or run `scripts/bootstrap_from_zero.sh` after the source ZIP is extracted.
+**Making the zip (any PC with the project):** zip the `HORNET` folder, exclude `.venv` and `data/databases/`.
 
 ## Example questions
 

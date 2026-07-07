@@ -1,10 +1,10 @@
 # HORNET — Build From Absolute Zero
 
-This guide is for a **blank machine**: no HORNET install, no git, no copy from another box. You install system tools, obtain the source once, add your CSVs, build SQLite databases locally, pull Ollama models, and run.
+This guide is for a **blank machine**: unzip a copied **hornet.zip**, add CSVs, build databases locally, pull Ollama models, run.
 
-**You start with:** a fresh Linux PC with network (for Ollama + Python packages) and your sports CSV files.
+**You start with:** a fresh Linux PC, a **ZIP of the HORNET folder** (USB / share), and your sports CSV files.
 
-**You do not need:** `git clone`, another HORNET machine, or pre-built `.db` files.
+**You do not need:** git, GitHub, wget, or another live HORNET install at setup time.
 
 ---
 
@@ -12,12 +12,13 @@ This guide is for a **blank machine**: no HORNET install, no git, no copy from a
 
 | Step | What you build |
 |------|----------------|
+| 0 | Copy `hornet.zip` onto the machine (USB, etc.) |
 | 1 | System packages (Python, ripgrep, Ollama) |
-| 2 | HORNET source tree on disk |
-| 3 | Empty `data/` layout |
+| 2 | Unzip → `~/HORNET` |
+| 3 | Empty `data/` layout (or already in zip) |
 | 4 | Your CSV files in `data/raw/` |
 | 5 | Python virtualenv + `pip install` |
-| 6 | Ollama model weights |
+| 6 | Ollama model weights (`ollama pull` — needs network) |
 | 7 | `.env` config |
 | 8 | SQLite databases from CSVs (`import_csv.py`) |
 | 9 | Run `hornet` |
@@ -75,45 +76,46 @@ curl -s http://localhost:11434/api/tags
 
 ---
 
-## 2. Get the HORNET source (no git)
+## 2. Get the HORNET folder (copy a ZIP)
 
-Pick **one** method.
+You only need a **ZIP file** on the new PC (USB stick, shared drive, etc.). No git, GitHub, or wget required for the code.
 
-### A — Download ZIP in a browser
+### Make the zip (any PC that has the project — one time)
 
-1. Open https://github.com/SalcedoER/HORNET
-2. **Code → Download ZIP**
-3. Extract:
+Right‑click the `HORNET` folder → **Compress**, or:
+
+```bash
+cd ~/Projects
+zip -r hornet.zip HORNET \
+  -x "HORNET/.venv/*" \
+  -x "HORNET/**/__pycache__/*" \
+  -x "HORNET/.git/*" \
+  -x "HORNET/data/databases/*"
+```
+
+Tip: put your CSVs in `HORNET/data/raw/` before zipping so they travel with the code.
+
+Copy **`hornet.zip`** to the new machine.
+
+### On the blank machine
 
 ```bash
 cd ~
-unzip ~/Downloads/HORNET-master.zip   # path varies
-mv HORNET-master HORNET
-cd ~/HORNET
+unzip hornet.zip          # or: unzip /media/usb/hornet.zip
+cd HORNET
 ```
 
-### B — `wget` the ZIP (terminal, no git)
+You can also copy an **unzipped** `HORNET/` folder the same way — skip `unzip`, just `cd HORNET`.
+
+### Verify
 
 ```bash
-cd ~
-wget -O hornet-src.zip https://github.com/SalcedoER/HORNET/archive/refs/heads/master.zip
-unzip hornet-src.zip
-mv HORNET-master HORNET
-cd ~/HORNET
-```
-
-### C — USB with a ZIP or folder
-
-Copy `HORNET.zip` or an extracted `HORNET/` folder from USB to `~/HORNET`.
-
-### Verify you have the project
-
-```bash
-cd ~/HORNET
 ls pyproject.toml config/settings.yaml hornet/cli.py scripts/import_csv.py
 ```
 
 All four must exist.
+
+**Not required in the zip:** `.venv`, `.git`, `data/databases/*.db` — created on the new machine.
 
 ---
 
@@ -458,26 +460,27 @@ HORNET/
 
 ---
 
-## 16. Complete checklist (blank machine)
+## 16. Complete checklist (blank machine, ZIP only)
 
 ```bash
+# 0. Copy hornet.zip to this machine (USB / share) — no git, no network download required
+
 # 1. System
-sudo apt update && sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3 curl unzip wget
-curl -fsSL https://ollama.com/install.sh | sh
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3 unzip
+curl -fsSL https://ollama.com/install.sh | sh    # needs network for models only
 
-# 2. Source (no git)
-cd ~ && wget -O hornet.zip https://github.com/SalcedoER/HORNET/archive/refs/heads/master.zip
-unzip hornet.zip && mv HORNET-master HORNET && cd HORNET
+# 2. Unzip
+cd ~ && unzip hornet.zip && cd HORNET
 
-# 3. Dirs
+# 3. Dirs (if not already in zip)
 mkdir -p data/raw/{nba,nfl,nhl} data/databases data/schema
 
-# 4. YOUR CSVs → data/raw/nba/ etc.
+# 4. CSVs — already in zip, or copy into data/raw/{nba,nfl,nhl}/
 
 # 5. Python
 python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 
-# 6. Models
+# 6. Models (needs network for ollama pull)
 export OLLAMA_MAX_LOADED_MODELS=1
 ollama pull qwen2.5-coder:14b && ollama pull sqlcoder:7b
 
@@ -494,14 +497,19 @@ hornet
 
 ---
 
-## Appendix — copy from another machine (optional)
+## Appendix — other ways to get the ZIP (optional)
 
-Only if you **already** have HORNET elsewhere and want to skip the ZIP download:
+- GitHub **Download ZIP** in a browser
+- `wget` / `git clone` if your environment allows it
+- `python scripts/package_for_deploy.py` on a dev machine (same idea: one zip file)
 
-- `rsync` / `scp` the folder
-- `python scripts/package_for_deploy.py` on the old box → tarball → USB
+All of these are just different ways to produce the same thing: **a `hornet.zip` you unzip on the target**.
 
-You still run `pip install`, `ollama pull`, and `import_csv.py` on the new machine unless you also copy `.venv` and `data/databases/` (not recommended).
+## Appendix — copy folder without zipping (optional)
+
+You can copy an unzipped `HORNET/` folder the same way (USB drag-and-drop). Skip the `unzip` step and `cd HORNET` directly.
+
+You still run `pip install`, `ollama pull`, and `import_csv.py` on the new machine.
 
 ---
 
