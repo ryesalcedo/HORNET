@@ -1,19 +1,16 @@
-# Ollama model names — pull these before first run:
-#   ollama pull qwen2.5-coder:32b
-#   ollama pull sqlcoder:7b
-#   ollama pull mathstral:7b
+# 16 GB VRAM — one model loaded at a time (ModelManager handles swaps)
 
 orchestrator:
-  model: qwen2.5-coder:32b
+  model: qwen2.5-coder:14b
   temperature: 0.2
-  keep_alive: -1          # stay loaded for the session
+  keep_alive: 0
 
 sql:
   model: sqlcoder:7b
   temperature: 0.0
-  keep_alive: -1
+  keep_alive: 0
 
 stats:
   model: mathstral:7b
   temperature: 0.1
-  keep_alive: 5m          # unload after idle to save VRAM
+  keep_alive: 0

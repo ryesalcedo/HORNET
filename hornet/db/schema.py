@@ -80,3 +80,46 @@ def schema_text(schema: dict[str, Any], *, max_tables: int = 40) -> str:
         col_defs = ", ".join(f"{c['name']} {c['type']}" for c in meta["columns"])
         lines.append(f"CREATE TABLE {table} ({col_defs});  -- rows: {meta['row_count']}")
     return "\n".join(lines)
+
+
+def schema_text_sql(
+    schema: dict[str, Any],
+    *,
+    max_tables: int = 25,
+    tables: list[str] | None = None,
+) -> str:
+    """Compact schema for SQLCoder — column names only, keeps prompts small."""
+    if not schema.get("exists"):
+        return f"-- missing: {schema.get('sport_db')}"
+
+    all_tables = schema.get("tables", {})
+    if tables:
+        ordered = [(t, all_tables[t]) for t in tables if t in all_tables]
+    else:
+        ordered = list(all_tables.items())
+
+    lines: list[str] = []
+    for i, (table, meta) in enumerate(ordered):
+        if i >= max_tables:
+            break
+        cols = ", ".join(c["name"] for c in meta["columns"])
+        lines.append(f"-- {table} ({meta['row_count']} rows): {cols}")
+    return "\n".join(lines)
+
+
+def nfl_tables_for_question(question: str) -> list[str] | None:
+    """Narrow 19 NFL tables to the relevant ones for the question."""
+    q = question.lower()
+    if any(w in q for w in ("pass", "quarterback", "qb ")):
+        return ["passing", "passing_post"]
+    if any(w in q for w in ("rush", "rushing")):
+        return ["rushing_and_receiving", "rushing_and_receiving_post"]
+    if any(w in q for w in ("receiv", "catch", "rec ")):
+        return ["rushing_and_receiving", "rushing_and_receiving_post"]
+    if any(w in q for w in ("defense", "tackle", "sack", "interception")):
+        return ["defense", "defense_post"]
+    if any(w in q for w in ("kick", "field goal", "fg ")):
+        return ["kicking", "kicking_post", "scoring"]
+    if any(w in q for w in ("game", "score", "week")):
+        return ["games", "team_stats"]
+    return None

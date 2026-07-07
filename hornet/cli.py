@@ -34,7 +34,8 @@ def _banner(settings) -> None:
             f"Orchestrator: [cyan]{settings.orchestrator.model}[/cyan]  "
             f"SQL: [cyan]{settings.sql.model}[/cyan]  "
             f"Stats: [cyan]{settings.stats.model}[/cyan] (on demand)\n"
-            "Commands: [dim]/exit[/dim]  [dim]/schema[/dim]  [dim]/models[/dim]",
+            "Flow: [dim]plan → execute → math → synthesize[/dim]\n"
+            "Commands: [dim]/exit  /schema  /models  /trace  /last[/dim]",
             border_style="yellow",
         )
     )
@@ -52,10 +53,12 @@ def main() -> None:
     build_all_schema_caches(settings)
     orchestrator = Orchestrator(settings)
     session = Session()
+    trace_mode = True
     history_path = ROOT / ".hornet_history"
     prompt_session = PromptSession(history=FileHistory(str(history_path)))
 
     _banner(settings)
+    console.print("[dim]Agent trace is ON — use /trace to toggle. Use /last to replay the last trace.[/dim]\n")
 
     while True:
         try:
@@ -77,7 +80,19 @@ def main() -> None:
             for name in client.list_models():
                 console.print(f"  {name}")
             continue
+        if text == "/trace":
+            trace_mode = not trace_mode
+            console.print(f"  Agent trace: [bold]{'ON' if trace_mode else 'OFF'}[/bold]")
+            continue
+        if text == "/last":
+            if session.trace:
+                for i, step in enumerate(session.trace, 1):
+                    console.print(f"  {i}. {step.format()}")
+            else:
+                console.print("  [dim]No trace yet — ask a question first.[/dim]")
+            continue
 
+        session.clear_trace()
         with console.status("[bold yellow]Thinking…[/bold yellow]"):
             try:
                 answer = orchestrator.run(text, session)
@@ -88,6 +103,10 @@ def main() -> None:
 
         console.print()
         console.print(Markdown(answer))
+        if trace_mode and session.trace:
+            console.print()
+            console.print(Panel("\n".join(f"{i}. {s.format()}" for i, s in enumerate(session.trace, 1)),
+                                title="Agent trace", border_style="dim cyan"))
         console.print()
 
 

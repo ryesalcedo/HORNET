@@ -5,7 +5,7 @@ Local multi-agent sports analytics for **NBA**, **NFL**, and **NHL** — termina
 ## Architecture (trimmed)
 
 ```
-User → Orchestrator (Qwen2.5-Coder 32B)
+User → Orchestrator (Qwen2.5-Coder 14B)
          ├── schema_lookup   (cached JSON, no LLM)
          ├── sql_query       (SQLCoder 7B for NL→SQL)
          ├── search          (ripgrep on raw CSVs)
@@ -20,12 +20,19 @@ Hub-and-spoke only: workers return structured JSON to the orchestrator. No agent
 - Python 3.10+
 - [Ollama](https://ollama.com/) running locally
 - [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) for file search
-- ~40 GB VRAM recommended (32B + 7B hot; Mathstral loaded on demand)
+- **16 GB VRAM** (default config below). For 40 GB+, switch orchestrator to `qwen2.5-coder:32b` in `config/models.yaml`.
 
 ```bash
-ollama pull qwen2.5-coder:32b
+ollama pull qwen2.5-coder:14b
 ollama pull sqlcoder:7b
-ollama pull mathstral:7b
+ollama pull mathstral:7b   # optional; only for stats narrative
+```
+
+Set before running Ollama on 16 GB cards:
+
+```bash
+export OLLAMA_MAX_LOADED_MODELS=1
+export OLLAMA_NUM_PARALLEL=1
 ```
 
 ## Setup

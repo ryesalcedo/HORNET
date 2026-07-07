@@ -5,36 +5,32 @@ import logging
 from typing import Any
 
 from hornet.config import Settings
-from hornet.llm import OllamaClient
+from hornet.llm.model_manager import ModelManager
+from hornet.llm.ollama_client import OllamaClient
 from hornet.session import Session
 
 logger = logging.getLogger(__name__)
 
 STATS_SYSTEM = """You are a sports statistics analyst.
-You receive numeric results already computed by Python/SQL.
-Explain comparisons clearly for a fan audience.
-Do not invent numbers — only use values provided in the context.
-Keep answers concise unless asked for depth.
-"""
+Explain the computed data clearly. Do not invent numbers — only use provided values."""
 
 
 class StatsAgent:
-    """Mathstral on demand — narrates stats; computation stays in compute_stats tool."""
-
-    def __init__(self, settings: Settings, client: OllamaClient) -> None:
+    def __init__(self, settings: Settings, client: OllamaClient, models: ModelManager) -> None:
         self.settings = settings
         self.client = client
+        self.models = models
 
     def explain(self, question: str, data: dict[str, Any], session: Session) -> str:
         payload = json.dumps(data, indent=2, default=str)[:12000]
-        prompt = f"""User question: {question}
-
-Computed data:
-{payload}
-
-Provide a clear statistical explanation and comparison."""
-
-        return self.client.generate(self.settings.stats, prompt, system=STATS_SYSTEM)
-
-    def unload(self) -> None:
-        self.client.unload(self.settings.stats.model)
+        raw = self.client.chat(
+            self.settings.stats,
+            [
+                {"role": "system", "content": STATS_SYSTEM},
+                {
+                    "role": "user",
+                    "content": f"Question: {question}\n\nData:\n{payload}\n\nExplain:",
+                },
+            ],
+        )
+        return raw.get("message", {}).get("content", "")

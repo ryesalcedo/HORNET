@@ -4,129 +4,141 @@ import json
 import logging
 from typing import Any
 
+from hornet.agents.executor import Executor
+from hornet.agents.math_agent import MathAgent
+from hornet.agents.planner import PLANNER_SYSTEM, Plan, build_data_plan, fallback_plan, parse_plan
 from hornet.agents.sql_agent import SQLAgent
 from hornet.agents.stats_agent import StatsAgent
 from hornet.config import Settings
 from hornet.llm import OllamaClient
-from hornet.session import Session, ToolResult
-from hornet.tools import TOOL_DEFINITIONS, build_tool_registry, run_tool
+from hornet.llm.model_manager import ModelManager
+from hornet.session import Session
 
 logger = logging.getLogger(__name__)
 
-ORCHESTRATOR_SYSTEM = """You are HORNET, a local sports analytics orchestrator for NBA, NFL, and NHL data.
+SYNTHESIZER_SYSTEM = """You are HORNET. Write a clear answer using tool results and math_analysis.
 
-You coordinate tools to answer multi-step questions. You do NOT guess stats — call tools.
-
-Available capabilities:
-- schema_lookup: inspect table/column layout per sport
-- sql_query: run SELECT queries (prefer after schema_lookup when unsure)
-- search: ripgrep raw CSV files under data/raw
-- compute_stats: deterministic math on numeric arrays (describe, compare_means, per_game, correlation)
-
-Workflow tips:
-1. For database questions → schema_lookup then sql_query (or ask SQL agent via natural question in sql)
-2. For cross-sport comparisons → query each sport, then compute_stats
-3. For narrative stats interpretation → set needs_stats_narrative=true in your final JSON
-
-When you have enough information, respond with JSON only:
-{
-  "final_answer": "markdown answer for the user",
-  "needs_stats_narrative": false,
-  "stats_context": {}
-}
-
-If you need a tool, respond with JSON only:
-{
-  "tool": "tool_name",
-  "arguments": { ... }
-}
-"""
+Rules:
+- Use math_analysis for ALL comparisons and calculated numbers — never do math yourself
+- If math_analysis.comparable is false, explain why metrics differ; do NOT pick a winner
+- Present each profile/leaders table from the data
+- Plain markdown only — no LaTeX
+- Be concise"""
 
 
 class Orchestrator:
+    """
+    3-phase agent flow:
+      1. PLAN    — router (code) or orchestrator (complex)
+      2. EXECUTE — sql_agent + tools
+      2b. MATH   — math_agent (deterministic, no LLM)
+      3. ANSWER  — orchestrator synthesizes from math + data
+      Optional: stats_agent (Mathstral narrative)
+    """
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = OllamaClient(settings)
-        self.registry = build_tool_registry(settings)
-        self.sql_agent = SQLAgent(settings, self.client)
-        self.stats_agent = StatsAgent(settings, self.client)
+        self.models = ModelManager(settings, self.client)
+        self.sql_agent = SQLAgent(settings, self.client, self.models)
+        self.math_agent = MathAgent()
+        self.stats_agent = StatsAgent(settings, self.client, self.models)
+        self.executor = Executor(settings, self.sql_agent)
 
-    def _call_orchestrator(self, session: Session) -> dict[str, Any]:
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": ORCHESTRATOR_SYSTEM},
-            *session.messages,
-        ]
-        if session.tool_results:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": session.summary_for_prompt(),
-                }
+    def _plan(self, question: str, session: Session) -> Plan:
+        plan = build_data_plan(question)
+        if plan is not None:
+            if plan.mode == "direct":
+                session.add_trace("plan", "router", "direct answer (no LLM)")
+            else:
+                parts = [f"{s.tool}({s.arguments.get('sport', '?')})" for s in plan.steps]
+                session.add_trace("plan", "router", f"{' → '.join(parts)}")
+            return plan
+
+        session.add_trace("plan", "orchestrator", "LLM execution plan", self.settings.orchestrator.model)
+
+        with self.models.use(self.settings.orchestrator) as model_cfg:
+            raw = self.client.chat(
+                model_cfg,
+                [
+                    {"role": "system", "content": PLANNER_SYSTEM},
+                    {"role": "user", "content": question},
+                ],
+                format_json=True,
             )
 
-        raw = self.client.chat(
-            self.settings.orchestrator,
-            messages,
-            format_json=True,
-        )
-        content = raw.get("message", {}).get("content", "{}")
         try:
-            return self.client.parse_json_content(content)
-        except json.JSONDecodeError:
-            return {"final_answer": content, "needs_stats_narrative": False}
+            decision = self.client.parse_json_content(raw.get("message", {}).get("content", "{}"))
+            plan = parse_plan(decision, question)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("planner JSON failed, using fallback")
+            plan = fallback_plan(question)
 
-    def _maybe_narrate(self, question: str, decision: dict[str, Any], session: Session) -> str:
-        if not decision.get("needs_stats_narrative"):
-            return str(decision.get("final_answer", ""))
+        if plan.mode == "data":
+            step_desc = ", ".join(s.tool for s in plan.steps) or "none"
+            session.add_trace("plan", "orchestrator", f"steps: {step_desc}", self.settings.orchestrator.model)
+        return plan
 
-        stats_context = decision.get("stats_context") or {
-            "tool_results": session.last_results(10),
-        }
-        narrative = self.stats_agent.explain(question, stats_context, session)
-        self.stats_agent.unload()
+    def _synthesize(self, question: str, session: Session, plan: Plan) -> str:
+        session.add_trace("synthesize", "orchestrator", "answer from tool results", self.settings.orchestrator.model)
+
+        payload = json.dumps(session.last_results(12), indent=2, default=str)[:10000]
+        math_block = json.dumps(session.scratch.get("math_analysis", {}), indent=2, default=str)
+        with self.models.use(self.settings.orchestrator) as model_cfg:
+            raw = self.client.chat(
+                model_cfg,
+                [
+                    {"role": "system", "content": SYNTHESIZER_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question: {question}\n\n"
+                            f"math_analysis (use for all math):\n{math_block}\n\n"
+                            f"Tool results:\n{payload}"
+                        ),
+                    },
+                ],
+            )
+        return raw.get("message", {}).get("content", "No answer generated.")
+
+    def _maybe_narrate(self, question: str, answer: str, session: Session) -> str:
+        session.add_trace("narrate", "stats_agent", "statistical narrative", self.settings.stats.model)
+        context = {"draft_answer": answer, "tool_results": session.last_results(10)}
+        with self.models.use(self.settings.stats):
+            narrative = self.stats_agent.explain(question, context, session)
         return narrative
-
-    def _handle_nl_sql(self, tool: str, args: dict[str, Any], session: Session) -> ToolResult:
-        """Allow orchestrator to pass a natural-language question instead of raw SQL."""
-        if tool == "sql_query" and "question" in args and "sql" not in args:
-            sport = args["sport"]
-            question = args["question"]
-            output = self.sql_agent.run(sport, question, session)
-            return ToolResult(tool="sql_query", input=args, output=output)
-
-        output = run_tool(tool, args, session, self.registry)
-        return ToolResult(tool=tool, input=args, output=output)
 
     def run(self, question: str, session: Session | None = None) -> str:
         session = session or Session()
+        session.clear_trace()
         session.add_user(question)
 
-        for round_idx in range(self.settings.max_tool_rounds):
-            decision = self._call_orchestrator(session)
-            logger.info("orchestrator round %s: %s", round_idx, list(decision.keys()))
+        # Phase 1 — PLAN
+        plan = self._plan(question, session)
+        if plan.mode == "direct":
+            answer = plan.direct_answer or "How can I help?"
+            session.add_assistant(answer)
+            return answer
 
-            if "tool" in decision:
-                tool = decision["tool"]
-                args = decision.get("arguments", {})
-                result = self._handle_nl_sql(tool, args, session)
-                session.record_tool(result)
-                if result.error:
-                    session.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"Tool {tool} error: {result.error}",
-                        }
-                    )
-                continue
+        # Phase 2 — EXECUTE (sql_agent + code tools)
+        self.models.unload_all()
+        self.executor.run(plan, session)
 
-            if "final_answer" in decision:
-                answer = self._maybe_narrate(question, decision, session)
-                session.add_assistant(answer)
-                return answer
+        # Phase 2b — MATH (deterministic)
+        analysis = self.math_agent.analyze(question, session)
+        session.scratch["math_analysis"] = analysis
+        session.add_trace(
+            "math",
+            "math_agent",
+            f"{analysis.get('status')} comparable={analysis.get('comparable', 'n/a')}",
+        )
 
-            # Fallback: treat unknown shape as final text
-            text = json.dumps(decision, indent=2)
-            session.add_assistant(text)
-            return text
+        # Phase 3 — SYNTHESIZE
+        self.models.unload_all()
+        answer = self._synthesize(question, session, plan)
 
-        return "Reached max tool rounds without a final answer. Check logs or rephrase."
+        if plan.needs_stats_narrative:
+            answer = self._maybe_narrate(question, answer, session)
+
+        session.add_assistant(answer)
+        return answer

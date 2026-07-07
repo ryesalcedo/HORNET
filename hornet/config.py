@@ -34,7 +34,7 @@ class Settings:
     schema_cache_dir: Path
     max_tool_rounds: int = 12
     max_sql_rows: int = 500
-    orchestrator: ModelConfig = field(default_factory=lambda: ModelConfig("qwen2.5-coder:32b"))
+    orchestrator: ModelConfig = field(default_factory=lambda: ModelConfig("qwen2.5-coder:14b"))
     sql: ModelConfig = field(default_factory=lambda: ModelConfig("sqlcoder:7b", temperature=0.0))
     stats: ModelConfig = field(
         default_factory=lambda: ModelConfig("mathstral:7b", temperature=0.1, keep_alive="5m")
@@ -92,7 +92,7 @@ def load_settings(root: Path | None = None) -> Settings:
         schema_cache_dir=root / raw_settings["schema_cache_dir"],
         max_tool_rounds=int(raw_settings.get("max_tool_rounds", 12)),
         max_sql_rows=int(raw_settings.get("max_sql_rows", 500)),
-        orchestrator=model_cfg("orchestrator", "qwen2.5-coder:32b"),
+        orchestrator=model_cfg("orchestrator", "qwen2.5-coder:14b"),
         sql=model_cfg("sql", "sqlcoder:7b"),
         stats=model_cfg("stats", "mathstral:7b"),
         ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),

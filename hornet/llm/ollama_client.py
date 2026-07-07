@@ -25,7 +25,6 @@ class OllamaClient:
         model_cfg: ModelConfig,
         messages: list[dict[str, Any]],
         *,
-        tools: list[dict[str, Any]] | None = None,
         format_json: bool = False,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -35,8 +34,6 @@ class OllamaClient:
             "options": {"temperature": model_cfg.temperature},
             "keep_alive": model_cfg.keep_alive,
         }
-        if tools:
-            payload["tools"] = tools
         if format_json:
             payload["format"] = "json"
 
@@ -46,23 +43,30 @@ class OllamaClient:
                 raise OllamaError(f"Ollama chat failed ({resp.status_code}): {resp.text}")
             return resp.json()
 
-    def generate(
+    def generate_completion(
         self,
         model_cfg: ModelConfig,
         prompt: str,
         *,
-        system: str | None = None,
+        prefix: str | None = None,
     ) -> str:
-        messages: list[dict[str, str]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        data = self.chat(model_cfg, messages)
-        return data.get("message", {}).get("content", "")
+        """Completion API — works better for SQLCoder than chat on small VRAM."""
+        full = f"{prefix}\n\n{prompt}" if prefix else prompt
+        payload = {
+            "model": model_cfg.model,
+            "prompt": full,
+            "stream": False,
+            "options": {"temperature": model_cfg.temperature, "num_predict": 256},
+            "keep_alive": model_cfg.keep_alive,
+        }
+        with httpx.Client(timeout=600.0) as client:
+            resp = client.post(f"{self.base}/api/generate", json=payload)
+            if resp.status_code != 200:
+                raise OllamaError(f"Ollama generate failed ({resp.status_code}): {resp.text}")
+            return resp.json().get("response", "")
 
     def unload(self, model: str) -> None:
-        """Ask Ollama to drop a model from VRAM."""
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=5.0) as client:
             client.post(
                 f"{self.base}/api/chat",
                 json={
@@ -75,8 +79,7 @@ class OllamaClient:
     def health(self) -> bool:
         try:
             with httpx.Client(timeout=5.0) as client:
-                resp = client.get(f"{self.base}/api/tags")
-                return resp.status_code == 200
+                return client.get(f"{self.base}/api/tags").status_code == 200
         except httpx.HTTPError:
             return False
 

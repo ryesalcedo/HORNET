@@ -12,8 +12,15 @@ from hornet.session import Session
 ToolFn = Callable[[dict[str, Any], Session], Any]
 
 
+def _require_sport(args: dict[str, Any]) -> str | None:
+    sport = args.get("sport")
+    return sport.lower() if sport else None
+
+
 def _schema_lookup(args: dict[str, Any], session: Session, settings: Settings) -> dict[str, Any]:
-    sport_id = args["sport"].lower()
+    sport_id = _require_sport(args)
+    if not sport_id:
+        return {"error": "Missing required argument: sport (nba, nfl, or nhl)"}
     cache_path = settings.schema_cache_dir / f"{sport_id}.json"
     schema = load_schema_cache(cache_path)
     if schema is None:
@@ -25,8 +32,12 @@ def _schema_lookup(args: dict[str, Any], session: Session, settings: Settings) -
 
 
 def _sql_query(args: dict[str, Any], session: Session, settings: Settings) -> dict[str, Any]:
-    sport_id = args["sport"].lower()
-    sql = args["sql"]
+    sport_id = _require_sport(args)
+    if not sport_id:
+        return {"error": "Missing required argument: sport (nba, nfl, or nhl)"}
+    sql = args.get("sql")
+    if not sql:
+        return {"error": "Missing required argument: sql (or pass question to SQL agent)"}
     db_path = settings.db_path(sport_id)
     try:
         return execute_query(db_path, sql, max_rows=settings.max_sql_rows)
@@ -128,14 +139,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "sql_query",
-            "description": "Run a read-only SELECT against a sport SQLite database.",
+            "description": (
+                "Fetch data from a sport SQLite database. "
+                "Pass a natural-language question — SQLCoder generates the SQL. "
+                "Do NOT write SQL yourself."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "sport": {"type": "string", "enum": ["nba", "nfl", "nhl"]},
-                    "sql": {"type": "string"},
+                    "question": {
+                        "type": "string",
+                        "description": "What data to fetch, in plain English",
+                    },
                 },
-                "required": ["sport", "sql"],
+                "required": ["sport", "question"],
             },
         },
     },
@@ -178,9 +196,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 
 def build_tool_registry(settings: Settings) -> dict[str, ToolFn]:
+    """Code-only tools. sql_query is routed through sql_agent in the orchestrator."""
     return {
         "schema_lookup": lambda args, session: _schema_lookup(args, session, settings),
-        "sql_query": lambda args, session: _sql_query(args, session, settings),
         "search": lambda args, session: _search(args, session, settings),
         "compute_stats": lambda args, session: _compute_stats(args, session, settings),
     }
