@@ -2,112 +2,72 @@
 
 Local multi-agent sports analytics for **NBA**, **NFL**, and **NHL** — terminal-first, powered by Ollama.
 
-## Architecture (trimmed)
+## Architecture
 
 ```
-User → Orchestrator (Qwen2.5-Coder 14B)
-         ├── schema_lookup   (cached JSON, no LLM)
-         ├── sql_query       (SQLCoder 7B for NL→SQL)
-         ├── search          (ripgrep on raw CSVs)
-         └── compute_stats   (Python/Pandas, no LLM)
-       → StatsAgent (Mathstral 7B, on demand for narrative)
+User → PLAN (router / orchestrator)
+     → EXECUTE (sql_agent + tools)
+     → ANALYZE (math_agent | prediction_agent — Python only)
+     → SYNTHESIZE (orchestrator)
+     → optional stats_agent (Mathstral narrative)
 ```
 
-Hub-and-spoke only: workers return structured JSON to the orchestrator. No agent mesh.
+| Agent | Model | When |
+|-------|-------|------|
+| Router | none | Most questions — deterministic routing |
+| SQL agent | SQLCoder 7B | Every database query |
+| Math agent | none | Comparisons, cross-sport profiles |
+| Prediction agent | none | Forecast / trend questions |
+| Orchestrator | Qwen 14B (32B on 40GB) | Complex plans + final answer |
+| Stats agent | Mathstral 7B | Deep statistical narrative (optional) |
 
-## Prerequisites
+Hub-and-spoke only — workers return structured JSON; the orchestrator narrates.
 
-- Python 3.10+
-- [Ollama](https://ollama.com/) running locally
-- [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) for file search
-- **16 GB VRAM** (default config below). For 40 GB+, switch orchestrator to `qwen2.5-coder:32b` in `config/models.yaml`.
+## Quick start
 
 ```bash
-ollama pull qwen2.5-coder:14b
-ollama pull sqlcoder:7b
-ollama pull mathstral:7b   # optional; only for stats narrative
-```
-
-Set before running Ollama on 16 GB cards:
-
-```bash
-export OLLAMA_MAX_LOADED_MODELS=1
-export OLLAMA_NUM_PARALLEL=1
-```
-
-## Setup
-
-```bash
-cd ~/Projects/HORNET
-python -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/SalcedoER/HORNET.git
+cd HORNET
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-cp .env.example .env   # optional overrides
-```
+export OLLAMA_MAX_LOADED_MODELS=1
+ollama pull qwen2.5-coder:14b
+ollama pull sqlcoder:7b
 
-## Add your data
-
-Drop CSVs into:
-
-```
-data/raw/nba/*.csv
-data/raw/nfl/*.csv
-data/raw/nhl/*.csv
-```
-
-Import into SQLite:
-
-```bash
+cp .env.example .env
+# Drop CSVs into data/raw/{nba,nfl,nhl}/
 python scripts/import_csv.py
-# or per sport:
-python scripts/import_csv.py --sport nba --replace
-```
 
-Rebuild schema cache (also runs automatically at startup):
-
-```bash
-python scripts/build_schema_cache.py
-```
-
-## Run
-
-```bash
 hornet
-# or
-python -m hornet
 ```
 
-### REPL commands
+In the REPL: `/schema` to confirm databases, then ask a question. Use `/trace` to see agent steps.
 
-| Command   | Action                          |
-|-----------|---------------------------------|
-| `/schema` | List DB paths and status        |
-| `/models` | List Ollama models              |
-| `/exit`   | Quit                            |
+## Full rebuild guide
 
-## Project layout
+See **[REBUILD.md](REBUILD.md)** for:
+
+- Complete setup from scratch
+- Verifying databases are present
+- Scaling to 40 GB VRAM / larger models
+- Adding new agents step-by-step
+- Troubleshooting
+
+## Example questions
 
 ```
-HORNET/
-├── config/
-│   ├── models.yaml       # Ollama model names & keep_alive
-│   └── settings.yaml     # sport DB paths, limits
-├── data/
-│   ├── raw/{nba,nfl,nhl}/   # your CSVs
-│   ├── databases/           # generated SQLite
-│   └── schema/              # cached schema JSON
-├── hornet/
-│   ├── agents/              # orchestrator, sql, stats
-│   ├── tools/               # schema, sql, search, stats
-│   ├── db/                  # SQLite + introspection
-│   ├── llm/                 # Ollama client
-│   └── cli.py               # terminal REPL
-└── scripts/
-    ├── import_csv.py
-    └── build_schema_cache.py
+Who led the NBA in scoring in 2024?
+Compare the top 3 NBA scorers in 2024 vs the top 3 NFL passers in 2024.
+Predict Joel Embiid's points per game in 2025
 ```
 
-## Next step
+## REPL commands
 
-Share your CSVs (or their column layouts) and we can tune table names, import logic, and example prompts for your schema.
+| Command | Action |
+|---------|--------|
+| `/schema` | Database paths and status |
+| `/models` | Ollama models available |
+| `/trace` | Toggle agent trace |
+| `/last` | Replay last trace |
+| `/exit` | Quit |

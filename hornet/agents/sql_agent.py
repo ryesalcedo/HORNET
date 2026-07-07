@@ -4,6 +4,7 @@ import logging
 import re
 from typing import Any
 
+from hornet.agents.prediction_agent import extract_player_name, sanitize_sql_like
 from hornet.config import Settings
 from hornet.db.column_hints import SPORT_HINTS
 from hornet.db import load_schema_cache
@@ -53,12 +54,40 @@ class SQLAgent:
         year = year_match.group(1) if year_match else None
         limit = SQLAgent._limit(question)
 
+        if sport == "nba" and re.search(r"history|predict|forecast|all season|season.by.season|trend|project", q):
+            player = extract_player_name(question)
+            if player:
+                safe = sanitize_sql_like(player)
+                return (
+                    f"SELECT year, pts, g, player FROM player_mvp_stats "
+                    f"WHERE player LIKE '%{safe}%' ORDER BY year"
+                )
+
         if sport == "nba" and year and re.search(r"point|scor|ppg", q):
             cols = "player, pts, g" if limit == 1 else "player, pts"
             return (
                 f"SELECT {cols} FROM player_mvp_stats "
                 f"WHERE year = {year} ORDER BY pts DESC LIMIT {limit}"
             )
+
+        if sport == "nfl" and re.search(r"history|predict|forecast|all season|trend|project", q):
+            player = extract_player_name(question)
+            if player:
+                safe = sanitize_sql_like(player)
+                if re.search(r"rush", q):
+                    return (
+                        f"SELECT year, rushing_yds, player, team FROM rushing_and_receiving "
+                        f"WHERE player LIKE '%{safe}%' ORDER BY year"
+                    )
+                if re.search(r"receiv", q):
+                    return (
+                        f"SELECT year, receiving_yds, player, team FROM rushing_and_receiving "
+                        f"WHERE player LIKE '%{safe}%' ORDER BY year"
+                    )
+                return (
+                    f"SELECT year, yds, player, team FROM passing "
+                    f"WHERE player LIKE '%{safe}%' ORDER BY year"
+                )
 
         if sport == "nfl" and year:
             if re.search(r"pass", q) and re.search(r"yard|yds", q):
@@ -80,6 +109,15 @@ class SQLAgent:
                 return (
                     f"SELECT player, team, receiving_yds FROM rushing_and_receiving "
                     f"WHERE year = {year} ORDER BY receiving_yds DESC LIMIT {limit}"
+                )
+
+        if sport == "nhl" and re.search(r"history|predict|forecast|all season|trend|project", q):
+            player = extract_player_name(question)
+            if player:
+                safe = sanitize_sql_like(player)
+                return (
+                    f"SELECT year, player_pts, player_gp, g, a, player, team_full "
+                    f"FROM player_team_stats WHERE player LIKE '%{safe}%' ORDER BY year"
                 )
 
         if sport == "nhl" and year and re.search(r"point|scor", q):

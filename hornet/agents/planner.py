@@ -5,6 +5,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from hornet.agents.prediction_agent import (
+    is_prediction_question,
+    prediction_history_question,
+)
+
 PLANNER_SYSTEM = """You are the HORNET planner. Output JSON only.
 
 Decide how to answer the user's sports analytics question about NBA, NFL, or NHL data.
@@ -48,6 +53,7 @@ class Plan:
     direct_answer: str | None = None
     steps: list[PlanStep] = field(default_factory=list)
     needs_stats_narrative: bool = False
+    needs_prediction: bool = False
 
 
 def infer_sports(text: str) -> list[str]:
@@ -59,7 +65,21 @@ def infer_sports(text: str) -> list[str]:
         found.append("nfl")
     if any(k in lower for k in ("nhl", "hockey")):
         found.append("nhl")
-    return found
+    if found:
+        return found
+    return _infer_sport_from_metrics(lower)
+
+
+def _infer_sport_from_metrics(lower: str) -> list[str]:
+    """Guess sport from stat vocabulary when league not named."""
+    hints: list[str] = []
+    if any(w in lower for w in ("ppg", "points per game", "rebound", "triple-double", "per game")):
+        hints.append("nba")
+    if any(w in lower for w in ("passing yard", "rushing yard", "touchdown", "quarterback", "receiving yard")):
+        hints.append("nfl")
+    if any(w in lower for w in ("goal", "assist", "hat trick", "goalie", "power play")):
+        hints.append("nhl")
+    return hints
 
 
 def infer_sport(text: str) -> str | None:
@@ -121,6 +141,16 @@ def build_data_plan(question: str) -> Plan | None:
     sports = infer_sports(question)
     if not sports:
         return None
+
+    if is_prediction_question(question) and len(sports) == 1:
+        sport = sports[0]
+        steps = [
+            PlanStep(
+                "sql_query",
+                {"sport": sport, "question": prediction_history_question(sport, question)},
+            )
+        ]
+        return Plan(mode="data", steps=steps, needs_prediction=True)
 
     q = question.lower()
     compare = any(w in q for w in ("compare", "versus", " vs ", "better", "difference", "how do"))
@@ -213,4 +243,5 @@ def parse_plan(raw: dict[str, Any], question: str) -> Plan:
         mode="data",
         steps=normalized,
         needs_stats_narrative=bool(raw.get("needs_stats_narrative")),
+        needs_prediction=bool(raw.get("needs_prediction")),
     )

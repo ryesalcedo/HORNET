@@ -34,7 +34,7 @@ def _banner(settings) -> None:
             f"Orchestrator: [cyan]{settings.orchestrator.model}[/cyan]  "
             f"SQL: [cyan]{settings.sql.model}[/cyan]  "
             f"Stats: [cyan]{settings.stats.model}[/cyan] (on demand)\n"
-            "Flow: [dim]plan → execute → math → synthesize[/dim]\n"
+            "Flow: [dim]plan → execute → analyze → synthesize[/dim]\n"
             "Commands: [dim]/exit  /schema  /models  /trace  /last[/dim]",
             border_style="yellow",
         )

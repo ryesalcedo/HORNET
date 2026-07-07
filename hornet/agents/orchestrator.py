@@ -7,6 +7,7 @@ from typing import Any
 from hornet.agents.executor import Executor
 from hornet.agents.math_agent import MathAgent
 from hornet.agents.planner import PLANNER_SYSTEM, Plan, build_data_plan, fallback_plan, parse_plan
+from hornet.agents.prediction_agent import PredictionAgent
 from hornet.agents.sql_agent import SQLAgent
 from hornet.agents.stats_agent import StatsAgent
 from hornet.config import Settings
@@ -16,12 +17,13 @@ from hornet.session import Session
 
 logger = logging.getLogger(__name__)
 
-SYNTHESIZER_SYSTEM = """You are HORNET. Write a clear answer using tool results and math_analysis.
+SYNTHESIZER_SYSTEM = """You are HORNET. Write a clear answer using tool results, math_analysis, and prediction.
 
 Rules:
-- Use math_analysis for ALL comparisons and calculated numbers — never do math yourself
+- Use prediction for ALL forecasts and projected numbers — never invent projections
+- Use math_analysis for comparisons and calculated numbers — never do math yourself
 - If math_analysis.comparable is false, explain why metrics differ; do NOT pick a winner
-- Present each profile/leaders table from the data
+- Present historical seasons and the projected value with the confidence note
 - Plain markdown only — no LaTeX
 - Be concise"""
 
@@ -31,8 +33,8 @@ class Orchestrator:
     3-phase agent flow:
       1. PLAN    — router (code) or orchestrator (complex)
       2. EXECUTE — sql_agent + tools
-      2b. MATH   — math_agent (deterministic, no LLM)
-      3. ANSWER  — orchestrator synthesizes from math + data
+      2b. ANALYZE — math_agent and/or prediction_agent (deterministic, no LLM)
+      3. ANSWER  — orchestrator synthesizes from analysis + data
       Optional: stats_agent (Mathstral narrative)
     """
 
@@ -42,6 +44,7 @@ class Orchestrator:
         self.models = ModelManager(settings, self.client)
         self.sql_agent = SQLAgent(settings, self.client, self.models)
         self.math_agent = MathAgent()
+        self.prediction_agent = PredictionAgent()
         self.stats_agent = StatsAgent(settings, self.client, self.models)
         self.executor = Executor(settings, self.sql_agent)
 
@@ -84,6 +87,7 @@ class Orchestrator:
 
         payload = json.dumps(session.last_results(12), indent=2, default=str)[:10000]
         math_block = json.dumps(session.scratch.get("math_analysis", {}), indent=2, default=str)
+        pred_block = json.dumps(session.scratch.get("prediction", {}), indent=2, default=str)
         with self.models.use(self.settings.orchestrator) as model_cfg:
             raw = self.client.chat(
                 model_cfg,
@@ -93,7 +97,8 @@ class Orchestrator:
                         "role": "user",
                         "content": (
                             f"Question: {question}\n\n"
-                            f"math_analysis (use for all math):\n{math_block}\n\n"
+                            f"prediction (use for forecasts):\n{pred_block}\n\n"
+                            f"math_analysis (use for comparisons):\n{math_block}\n\n"
                             f"Tool results:\n{payload}"
                         ),
                     },
@@ -124,14 +129,23 @@ class Orchestrator:
         self.models.unload_all()
         self.executor.run(plan, session)
 
-        # Phase 2b — MATH (deterministic)
-        analysis = self.math_agent.analyze(question, session)
-        session.scratch["math_analysis"] = analysis
-        session.add_trace(
-            "math",
-            "math_agent",
-            f"{analysis.get('status')} comparable={analysis.get('comparable', 'n/a')}",
-        )
+        # Phase 2b — ANALYZE (deterministic)
+        if plan.needs_prediction:
+            prediction = self.prediction_agent.predict(question, session)
+            session.scratch["prediction"] = prediction
+            session.add_trace(
+                "predict",
+                "prediction_agent",
+                f"{prediction.get('status')} → {prediction.get('projected_value', 'n/a')}",
+            )
+        else:
+            analysis = self.math_agent.analyze(question, session)
+            session.scratch["math_analysis"] = analysis
+            session.add_trace(
+                "math",
+                "math_agent",
+                f"{analysis.get('status')} comparable={analysis.get('comparable', 'n/a')}",
+            )
 
         # Phase 3 — SYNTHESIZE
         self.models.unload_all()
