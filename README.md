@@ -69,3 +69,5 @@ Predict Joel Embiid's points per game in 2025
 | `/exit` | Quit |
 
 REBUILD.md also covers scaling to 40 GB VRAM and adding new agents.
+
+**Rocky Linux, no git/zip, databases already built:** see **[ROCKY_LINUX.md](ROCKY_LINUX.md)**.
