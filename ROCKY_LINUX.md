@@ -4,9 +4,11 @@ Guide for a **Rocky Linux** machine where you:
 
 - **Cannot** use `git`, GitHub, or `wget` for the project
 - **Do not** want to use a zip file
-- **Already have** the SQLite databases (`nba.db`, `nfl.db`, `nhl.db`)
+- Copy the HORNET **folder** on USB (exclude `.venv`)
 
-You still need the **HORNET Python source files** on disk (copy the project **folder** over USB, or copy files one-by-one). You cannot run `hornet` without them — but you **do not** need CSVs, `import_csv.py`, or `.venv` from the old machine.
+**Databases:** either copy pre-built `.db` files **or** build them on Rocky from CSVs (see [§3](#3-databases-copy-pre-built-or-build-from-csvs)).
+
+You still need the **HORNET Python source files** on disk. You cannot run `hornet` without them.
 
 ---
 
@@ -25,13 +27,14 @@ HORNET/
 │   └── settings.yaml
 ├── hornet/              # entire directory (all .py files)
 └── scripts/
+    ├── import_csv.py          # needed if building DBs from CSVs
     ├── build_schema_cache.py
-    └── (others optional if you have DBs already)
+    └── verify_setup.sh
 ```
 
 **Do not copy:** `.venv/`, `.git/`, `__pycache__/`, `hornet.egg-info/`
 
-### Required — your databases
+### Option A — copy pre-built databases
 
 ```
 HORNET/data/databases/nba.db
@@ -39,16 +42,25 @@ HORNET/data/databases/nfl.db
 HORNET/data/databases/nhl.db
 ```
 
-Paths must match `config/settings.yaml` (relative to the project root).
+Skip [§3B](#3b-build-databases-from-csvs-on-rocky) — go straight to schema cache (§7).
 
-### Not required
+### Option B — copy CSVs and build databases on Rocky
+
+```
+HORNET/data/raw/nba/*.csv
+HORNET/data/raw/nfl/*.csv
+HORNET/data/raw/nhl/*.csv
+```
+
+You need `scripts/import_csv.py` and `hornet/db/csv_import.py` (included in `hornet/`). Follow [§3B](#3b-build-databases-from-csvs-on-rocky).
+
+### Not required on copy
 
 | Item | Why |
 |------|-----|
-| `data/raw/*.csv` | You already have `.db` files |
-| `import_csv.py` run | Skip — DBs are pre-built |
 | `.venv/` | Rebuild on Rocky with `pip` |
-| `data/schema/*.json` | Rebuilt in step 7 below |
+| `data/schema/*.json` | Rebuilt after DBs exist (§7) |
+| `data/databases/*.db` | Only if using Option B — created by import |
 
 ---
 
@@ -130,7 +142,7 @@ ollama pull sqlcoder:7b
 ollama pull mathstral:7b    # optional
 ```
 
-**40 GB VRAM:** use `qwen2.5-coder:32b` and set `OLLAMA_MAX_LOADED_MODELS=2` (see §9).
+**40 GB VRAM:** use `qwen2.5-coder:32b` and set `OLLAMA_MAX_LOADED_MODELS=2` (see §10).
 
 ### Air-gapped Ollama (no network on Rocky)
 
@@ -138,29 +150,38 @@ On a connected machine, copy `/usr/share/ollama/.ollama/models/` (or `~/.ollama/
 
 ---
 
-## 3. Lay out the project on Rocky
+## 3. Databases: copy pre-built OR build from CSVs
 
-Assume you copied the `HORNET` folder to your home directory:
+Paths are always (relative to project root):
+
+```
+data/databases/nba.db
+data/databases/nfl.db
+data/databases/nhl.db
+```
+
+These match `config/settings.yaml`. Create the folder first:
 
 ```bash
 cd ~/HORNET
-```
-
-Create directories if missing:
-
-```bash
 mkdir -p data/databases data/schema data/raw/nba data/raw/nfl data/raw/nhl
 ```
 
-Place your three database files:
+---
+
+### 3A. Copy pre-built databases
+
+If you already have `.db` files from another machine, copy them in:
 
 ```bash
-ls -lh data/databases/nba.db data/databases/nfl.db data/databases/nhl.db
+cp /path/from/usb/nba.db  data/databases/nba.db
+cp /path/from/usb/nfl.db  data/databases/nfl.db
+cp /path/from/usb/nhl.db  data/databases/nhl.db
+
+ls -lh data/databases/*.db
 ```
 
-All three must exist and be non-zero size.
-
-Verify SQLite can read them:
+Verify:
 
 ```bash
 sqlite3 data/databases/nba.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table';"
@@ -168,11 +189,173 @@ sqlite3 data/databases/nfl.db "SELECT COUNT(*) FROM sqlite_master WHERE type='ta
 sqlite3 data/databases/nhl.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table';"
 ```
 
-If table names differ from what HORNET expects, see [§10 Troubleshooting](#10-troubleshooting).
+Then skip to **§4** (Python venv). Run **§7** (schema cache) after `pip install`.
 
 ---
 
-## 4. Python virtual environment
+### 3B. Build databases from CSVs on Rocky
+
+Use this when you have **CSV files** but no `.db` files yet.
+
+#### Step 1 — Place CSV files
+
+| Sport | Copy files to |
+|-------|----------------|
+| NBA | `data/raw/nba/` |
+| NFL | `data/raw/nfl/` |
+| NHL | `data/raw/nhl/` |
+
+```bash
+ls data/raw/nba/ data/raw/nfl/ data/raw/nhl/
+```
+
+Each folder needs at least one `.csv` file.
+
+#### Step 2 — CSV format (what HORNET expects)
+
+**NBA** — typically one file (e.g. `player_mvp_stats.csv`):
+
+| Column | Meaning |
+|--------|---------|
+| `player` | Player name |
+| `year` | Season **end** year (2024 = 2023–24 season) |
+| `pts` | Points **per game** (not season total) |
+| `g` | Games played |
+
+After import, table name is **`player_mvp_stats`**.
+
+**NFL** — one master CSV with a **`TableType`** column (e.g. `master_nfl_2020_2025.csv`):
+
+- HORNET splits it into ~19 tables: `passing`, `rushing_and_receiving`, `defense`, `kicking`, etc.
+- Each row’s `TableType` value decides which table it goes into.
+- Key columns on `passing`: `player`, `team`, `year`, `yds` (passing yards), `td`
+- Key columns on `rushing_and_receiving`: `player`, `team`, `year`, `rushing_yds`, `receiving_yds`
+
+**NHL** — one combined file (e.g. `combined_output.csv`):
+
+| Column | Meaning |
+|--------|---------|
+| `player` | Player name |
+| `year` | Season |
+| `player_pts` | Season **total** points (goals + assists) |
+| `player_gp` | Games played |
+| `g` | **Goals** (not games) |
+| `a` | Assists |
+
+After import, table name is **`player_team_stats`**.
+
+Filenames with parentheses like `player_mvp_stats(in).csv` work — HORNET strips `(in)` automatically.
+
+#### Step 3 — Install Python first (import needs pandas)
+
+You must complete **§4** (`pip install -e .`) before import if you have not already:
+
+```bash
+cd ~/HORNET
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+#### Step 4 — Run the import
+
+Import **all sports**:
+
+```bash
+cd ~/HORNET
+source .venv/bin/activate
+python scripts/import_csv.py
+```
+
+One sport only, replace existing tables:
+
+```bash
+python scripts/import_csv.py --sport nba --replace
+python scripts/import_csv.py --sport nfl --replace
+python scripts/import_csv.py --sport nhl --replace
+```
+
+**What this does:**
+
+1. Reads every `*.csv` in `data/raw/{sport}/`
+2. Cleans column names (spaces → underscores, etc.)
+3. Writes SQLite tables into `data/databases/{sport}.db`
+4. Rebuilds `data/schema/{sport}.json` automatically
+
+Example output:
+
+```
+== NBA ==
+  imported player_mvp_stats: 24000 rows
+  Tables (1): player_mvp_stats
+
+== NFL ==
+  imported passing: 1200 rows
+  ...
+  Tables (19): passing, rushing_and_receiving, ...
+
+== NHL ==
+  imported player_team_stats: 30000 rows
+```
+
+#### Step 5 — Verify the databases were created
+
+```bash
+ls -lh data/databases/nba.db data/databases/nfl.db data/databases/nhl.db
+```
+
+Row counts:
+
+```bash
+sqlite3 data/databases/nba.db "SELECT COUNT(*) FROM player_mvp_stats;"
+sqlite3 data/databases/nfl.db "SELECT COUNT(*) FROM passing;"
+sqlite3 data/databases/nhl.db "SELECT COUNT(*) FROM player_team_stats;"
+```
+
+Quick sanity — top scorers:
+
+```bash
+sqlite3 data/databases/nba.db \
+  "SELECT player, pts FROM player_mvp_stats WHERE year=2024 ORDER BY pts DESC LIMIT 3;"
+
+sqlite3 data/databases/nfl.db \
+  "SELECT player, yds FROM passing WHERE year=2024 ORDER BY yds DESC LIMIT 3;"
+
+sqlite3 data/databases/nhl.db \
+  "SELECT player, player_pts FROM player_team_stats WHERE year=2023 ORDER BY player_pts DESC LIMIT 3;"
+```
+
+If import says **"No CSVs in data/raw/..."** — files are in the wrong folder or not named `*.csv`.
+
+If import runs but SQL queries return empty — check `year` values in your CSV match the question (NBA/NHL use season end year).
+
+---
+
+## 4. Lay out / confirm project on Rocky
+
+Assume you copied the `HORNET` folder to your home directory:
+
+```bash
+cd ~/HORNET
+```
+
+Directories (if not already created in §3):
+
+```bash
+mkdir -p data/databases data/schema data/raw/nba data/raw/nfl data/raw/nhl
+```
+
+Confirm databases exist (from §3A or §3B):
+
+```bash
+ls -lh data/databases/nba.db data/databases/nfl.db data/databases/nhl.db
+```
+
+If table names differ from HORNET defaults, see [§11 Troubleshooting](#11-troubleshooting).
+
+---
+
+## 5. Python virtual environment
 
 ```bash
 cd ~/HORNET
@@ -205,7 +388,7 @@ pip install --no-index --find-links=/path/to/wheels -e .
 
 ---
 
-## 5. Environment config
+## 6. Environment config
 
 ```bash
 cp .env.example .env
@@ -227,9 +410,11 @@ HORNET_LOG_LEVEL=INFO
 
 ---
 
-## 6. Build schema cache from your databases
+## 7. Build schema cache
 
-HORNET needs JSON schema files in `data/schema/`. Generate them from your existing `.db` files:
+HORNET needs JSON schema files in `data/schema/`. Generate from your `.db` files:
+
+> If you ran `import_csv.py` in §3B, schema JSON may already exist — running this again is safe.
 
 ```bash
 cd ~/HORNET
@@ -245,7 +430,7 @@ ls -la data/schema/nba.json data/schema/nfl.json data/schema/nhl.json
 
 ---
 
-## 7. Run HORNET
+## 8. Run HORNET
 
 ```bash
 cd ~/HORNET
@@ -283,11 +468,11 @@ Use `/trace` to see agent steps.
 
 ---
 
-## 8. Checklist (copy-paste order)
+## 9. Checklists
+
+### Path A — you copied `.db` files
 
 ```bash
-# --- On Rocky Linux ---
-
 # System
 sudo dnf install -y python3.11 python3.11-pip python3.11-devel sqlite curl
 sudo dnf install -y epel-release && sudo dnf install -y ripgrep
@@ -298,24 +483,51 @@ sudo systemctl enable --now ollama
 ollama pull qwen2.5-coder:14b
 ollama pull sqlcoder:7b
 
-# Project (after copying HORNET folder + 3x .db to ~/HORNET)
+# Project
 cd ~/HORNET
 mkdir -p data/databases data/schema
-# (place nba.db nfl.db nhl.db in data/databases/)
+# copy nba.db nfl.db nhl.db → data/databases/
 
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .
 cp .env.example .env
 
 python scripts/build_schema_cache.py
+bash scripts/verify_setup.sh
 hornet
-# → /schema  (all ok)
+```
+
+### Path B — you have CSVs, build DBs on Rocky
+
+```bash
+# System + Ollama (same as Path A)
+sudo dnf install -y python3.11 python3.11-pip python3.11-devel sqlite curl
+sudo dnf install -y epel-release && sudo dnf install -y ripgrep
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+ollama pull qwen2.5-coder:14b
+ollama pull sqlcoder:7b
+
+# Project
+cd ~/HORNET
+mkdir -p data/raw/{nba,nfl,nhl} data/databases data/schema
+# copy CSVs → data/raw/nba/ etc.
+
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env
+
+python scripts/import_csv.py          # ← creates data/databases/*.db
+ls -lh data/databases/*.db
+
+python scripts/build_schema_cache.py
+bash scripts/verify_setup.sh
+hornet
 ```
 
 ---
 
-## 9. Scaling models (40 GB VRAM)
+## 10. Scaling models (40 GB VRAM)
 
 Edit `config/models.yaml`:
 
@@ -340,11 +552,13 @@ Environment="OLLAMA_MAX_LOADED_MODELS=2"
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| 10,000 files when copying | Exclude `.venv/` — only copy source + `data/databases/*.db` |
+| Import: "No CSVs" | CSVs must be in `data/raw/<sport>/` with `.csv` extension |
+| Import: 0 rows | Open CSV in a text editor — check headers match §3B |
+| `pandas` import error | Run `pip install -e .` inside `.venv` before `import_csv.py` |
 | `python3.11: command not found` | `dnf install python3.11` or use `python3` if ≥ 3.10 |
 | `/schema` → `missing db` | Wrong path — DBs must be `data/databases/{nba,nfl,nhl}.db` |
 | SQL returns empty | Table/column names differ from HORNET defaults — check `hornet/db/column_hints.py` |
@@ -365,12 +579,13 @@ If your saved DBs use different names, either rename tables in SQLite or add SQL
 
 ---
 
-## 11. What “no git / no zip” still means
+## 12. What “no git / no zip” still means
 
 | You need | How to get it without git or zip |
 |----------|----------------------------------|
 | HORNET source | Copy the **folder** on USB (exclude `.venv`) |
-| Databases | You already have these ✓ |
+| Databases | Copy `.db` files **or** build from CSVs (§3) |
+| CSV data | USB alongside source, if building DBs on Rocky |
 | Python packages | `pip install` (network or offline wheels) |
 | Ollama models | `ollama pull` (network) or copy model blobs |
 
@@ -378,6 +593,6 @@ There is no way to run HORNET with **only** the `.db` files — you need the `ho
 
 ---
 
-## 12. Adding agents / changing models later
+## 13. Adding agents / changing models later
 
 See [REBUILD.md](REBUILD.md) §12–13 for agent extension and model scaling. Same on Rocky as any Linux.
