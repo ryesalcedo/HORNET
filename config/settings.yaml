@@ -13,5 +13,6 @@ sports:
     csv_glob: data/raw/nhl/*.csv
 
 schema_cache_dir: data/schema
-max_tool_rounds: 12
-max_sql_rows: 500
+resident_models: true
+max_tool_rounds: 24
+max_sql_rows: 5000

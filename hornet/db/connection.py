@@ -20,7 +20,7 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def execute_query(db_path: Path, sql: str, *, max_rows: int = 500) -> dict[str, Any]:
+def execute_query(db_path: Path, sql: str, *, max_rows: int = 5000) -> dict[str, Any]:
     sql_stripped = sql.strip().rstrip(";")
     if not sql_stripped.lower().startswith("select"):
         raise ValueError("Only SELECT queries are allowed")

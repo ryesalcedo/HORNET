@@ -50,7 +50,7 @@ class OllamaClient:
         *,
         prefix: str | None = None,
     ) -> str:
-        """Completion API — works better for SQLCoder than chat on small VRAM."""
+        """Completion API — works better for SQLCoder than chat."""
         full = f"{prefix}\n\n{prompt}" if prefix else prompt
         payload = {
             "model": model_cfg.model,

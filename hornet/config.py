@@ -10,7 +10,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent.parent
+def _resolve_root() -> Path:
+    if env := os.getenv("HORNET_ROOT"):
+        return Path(env)
+    here = Path(__file__).resolve().parent
+    for candidate in (here.parent, *here.parents):
+        if (candidate / "config" / "settings.yaml").is_file():
+            return candidate
+    return here.parent
+
+
+ROOT = _resolve_root()
 
 
 @dataclass
@@ -32,12 +42,13 @@ class ModelConfig:
 class Settings:
     sports: list[SportConfig]
     schema_cache_dir: Path
-    max_tool_rounds: int = 12
-    max_sql_rows: int = 500
-    orchestrator: ModelConfig = field(default_factory=lambda: ModelConfig("qwen2.5-coder:14b"))
-    sql: ModelConfig = field(default_factory=lambda: ModelConfig("sqlcoder:7b", temperature=0.0))
+    resident_models: bool = True
+    max_tool_rounds: int = 24
+    max_sql_rows: int = 5000
+    orchestrator: ModelConfig = field(default_factory=lambda: ModelConfig("qwen2.5-coder:32b"))
+    sql: ModelConfig = field(default_factory=lambda: ModelConfig("sqlcoder:15b", temperature=0.0))
     stats: ModelConfig = field(
-        default_factory=lambda: ModelConfig("mathstral:7b", temperature=0.1, keep_alive="5m")
+        default_factory=lambda: ModelConfig("mathstral:7b", temperature=0.1, keep_alive=-1)
     )
     ollama_host: str = "http://localhost:11434"
     log_level: str = "INFO"
@@ -87,13 +98,21 @@ def load_settings(root: Path | None = None) -> Settings:
             keep_alive=_parse_keep_alive(block.get("keep_alive", -1)),
         )
 
+    resident_default = raw_settings.get("resident_models", True)
+    resident_env = os.getenv("HORNET_RESIDENT_MODELS")
+    if resident_env is not None:
+        resident_models = resident_env.lower() in ("1", "true", "yes")
+    else:
+        resident_models = bool(resident_default)
+
     return Settings(
         sports=sports,
         schema_cache_dir=root / raw_settings["schema_cache_dir"],
-        max_tool_rounds=int(raw_settings.get("max_tool_rounds", 12)),
-        max_sql_rows=int(raw_settings.get("max_sql_rows", 500)),
-        orchestrator=model_cfg("orchestrator", "qwen2.5-coder:14b"),
-        sql=model_cfg("sql", "sqlcoder:7b"),
+        resident_models=resident_models,
+        max_tool_rounds=int(raw_settings.get("max_tool_rounds", 24)),
+        max_sql_rows=int(raw_settings.get("max_sql_rows", 5000)),
+        orchestrator=model_cfg("orchestrator", "qwen2.5-coder:32b"),
+        sql=model_cfg("sql", "sqlcoder:15b"),
         stats=model_cfg("stats", "mathstral:7b"),
         ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
         log_level=os.getenv("HORNET_LOG_LEVEL", "INFO"),

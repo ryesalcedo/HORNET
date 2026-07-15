@@ -17,3 +17,7 @@ data/schema/*.json
 .mypy_cache/
 .ruff_cache/
 *.log
+.test-install/
+HORNET-app.tar.gz
+hornet-app.b64
+*.tar.gz

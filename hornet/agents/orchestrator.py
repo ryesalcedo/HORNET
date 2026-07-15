@@ -121,7 +121,6 @@ class Orchestrator:
             return answer
 
         # Phase 2 — EXECUTE (sql_agent + code tools)
-        self.models.unload_all()
         self.executor.run(plan, session)
 
         # Phase 2b — MATH (deterministic)
@@ -134,7 +133,6 @@ class Orchestrator:
         )
 
         # Phase 3 — SYNTHESIZE
-        self.models.unload_all()
         answer = self._synthesize(question, session, plan)
 
         if plan.needs_stats_narrative:

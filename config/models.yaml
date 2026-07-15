@@ -1,16 +1,16 @@
-# 16 GB VRAM — one model loaded at a time (ModelManager handles swaps)
+# Multi-model resident profile — all agents stay loaded (128 GB+ VRAM)
 
 orchestrator:
-  model: qwen2.5-coder:14b
+  model: qwen2.5-coder:32b
   temperature: 0.2
-  keep_alive: 0
+  keep_alive: -1
 
 sql:
-  model: sqlcoder:7b
+  model: sqlcoder:15b
   temperature: 0.0
-  keep_alive: 0
+  keep_alive: -1
 
 stats:
   model: mathstral:7b
   temperature: 0.1
-  keep_alive: 0
+  keep_alive: -1
