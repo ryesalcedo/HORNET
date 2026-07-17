@@ -9,6 +9,7 @@ import pytest
 from hornet.agents.sql_agent import SQLAgent
 from hornet.db.connection import execute_query
 from tests.fixtures.build_sports_dbs import (
+    NBA_2016_THREES_LEADER,
     NBA_2024_SCORING_LEADER,
     NFL_2023_PASSING_LEADER,
     NFL_2023_RUSHING_LEADER,
@@ -61,10 +62,39 @@ def test_fast_path_nhl_points(sql_agent: SQLAgent, settings):
     assert int(result["rows"][0]["player_pts"]) == NHL_2023_POINTS_LEADER[1]
 
 
-def test_threes_made_unsupported(sql_agent: SQLAgent):
-    out = sql_agent.run("nba", "Most threes made in 2016", session=MagicMock())
+def test_fast_path_nba_threes_made(sql_agent: SQLAgent, settings):
+    sql = sql_agent._generate("nba", "Most threes made in 2016")
+    assert "c_3p" in sql.lower()
+    assert "order by c_3p desc" in sql.lower()
+    result = execute_query(settings.db_path("nba"), sql)
+    assert result["rows"][0]["player"] == NBA_2016_THREES_LEADER[0]
+    assert float(result["rows"][0]["c_3p"]) == pytest.approx(NBA_2016_THREES_LEADER[1])
+
+
+def test_threes_made_unsupported_without_column(settings):
+    """If only 3P% exists, refuse 'threes made'."""
+    from hornet.db import load_schema_cache
+    from hornet.db.schema import save_schema_cache
+
+    cache = load_schema_cache(settings.schema_cache_dir / "nba.json")
+    assert cache is not None
+    # strip made column from cached schema copy
+    for meta in cache["tables"].values():
+        meta["columns"] = [c for c in meta["columns"] if c["name"].lower() != "c_3p"]
+    save_schema_cache(settings.schema_cache_dir / "nba.json", cache)
+
+    client = MagicMock()
+    models = MagicMock()
+    models.use.side_effect = AssertionError("should not call SQLCoder")
+    agent = SQLAgent(settings, client, models)
+    out = agent.run("nba", "Most threes made in 2016", session=MagicMock())
     assert "error" in out
     assert "3pm" in out["error"].lower() or "three" in out["error"].lower()
+
+    # restore full cache for later tests
+    from hornet.db import build_all_schema_caches
+
+    build_all_schema_caches(settings)
 
 
 def test_ambiguous_skips_fast_path_uses_sqlcoder(settings):

@@ -8,6 +8,7 @@ from hornet.config import Settings
 from hornet.db.column_hints import dynamic_hints
 from hornet.db import load_schema_cache
 from hornet.db.connection import execute_query
+from hornet.db.shooting_cols import threes_made_column, threes_pct_column
 from hornet.db.schema import (
     all_columns,
     explain_select,
@@ -98,34 +99,26 @@ class SQLAgent:
 
     @staticmethod
     def _threes_made_column(columns: set[str]) -> str | None:
-        candidates = (
-            "fg3",
-            "fg3m",
-            "x3p",
-            "c_3p",
-            "three_pm",
-            "threes",
-            "tpm",
-            "made_3",
-            "threes_made",
-        )
-        for name in candidates:
-            if name in columns:
-                return name
-        for name in sorted(columns):
-            if re.search(r"(^|_)(3p|fg3|three)", name) and "pct" not in name and "attempt" not in name:
-                return name
-        return None
+        return threes_made_column(columns)
 
     @classmethod
     def _unsupported_reason(cls, sport: str, question: str, cache: dict[str, Any]) -> str | None:
         cols = all_columns(cache)
-        if sport == "nba" and cls._asks_threes_made(question) and not cls._threes_made_column(cols):
+        if sport != "nba" or not cls._asks_threes_made(question):
+            return None
+        made = cls._threes_made_column(cols)
+        if made:
+            return None
+        pct = threes_pct_column(cols)
+        if pct:
             return (
-                "This NBA database has no three-pointers-made / 3PM column in the live schema. "
-                "Cannot answer 'most threes made' from available columns."
+                f"Live schema has three-point percentage ({pct}) but no threes-made / 3PM column. "
+                "Ask for 3P% leaders, or confirm the makes column name via /schema nba."
             )
-        return None
+        return (
+            "Live schema has no three-pointers-made / 3PM column. "
+            "Cannot answer 'most threes made'. Run /schema nba to inspect columns."
+        )
 
     def _ensure_valid(self, sport: str, sql: str, cache: dict[str, Any]) -> str:
         bad = validate_sql_against_schema(sql, cache)
@@ -163,9 +156,6 @@ class SQLAgent:
         limit = SQLAgent._limit(question)
         cols = all_columns(cache)
 
-        if sport == "nba" and SQLAgent._asks_threes_made(question):
-            return None
-
         def has(*names: str) -> bool:
             return all(n in cols for n in names)
 
@@ -174,6 +164,34 @@ class SQLAgent:
         )
         if strict and not leaderish:
             return None
+
+        if sport == "nba" and SQLAgent._asks_threes_made(question):
+            made_col = SQLAgent._threes_made_column(cols)
+            if not made_col:
+                return None
+            table = None
+            tables = cache.get("tables") or {}
+            if "player_mvp_stats" in tables:
+                table = "player_mvp_stats"
+            else:
+                for tname, meta in tables.items():
+                    names = {c["name"].lower() for c in meta["columns"]}
+                    if made_col in names:
+                        table = tname
+                        break
+            if not table:
+                return None
+            pieces = ["player"]
+            if "team" in cols:
+                pieces.append("team")
+            pieces.append(made_col)
+            if "g" in cols:
+                pieces.append("g")
+            select_cols = ", ".join(pieces)
+            return (
+                f"SELECT {select_cols} FROM {table} "
+                f"WHERE year = {year} ORDER BY {made_col} DESC LIMIT {limit}"
+            )
 
         if sport == "nba" and has("player", "pts", "year"):
             scoring = bool(

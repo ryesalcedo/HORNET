@@ -13,6 +13,7 @@ YEAR_END = 2026
 
 # Deterministic expected leaders used by tests
 NBA_2024_SCORING_LEADER = ("Nikola Jokic", 35.1)
+NBA_2016_THREES_LEADER = ("Stephen Curry", 5.1)
 NFL_2023_RUSHING_LEADER = ("Christian McCaffrey", 1459.0)
 NFL_2023_PASSING_LEADER = ("Tua Tagovailoa", 4624.0)
 NHL_2023_POINTS_LEADER = ("Connor McDavid", 153)
@@ -48,6 +49,7 @@ def build_nba(db_path: Path) -> Path:
             stl REAL,
             blk REAL,
             fg_pct REAL,
+            c_3p REAL,
             c_3p_pct REAL,
             ft_pct REAL,
             ws REAL,
@@ -57,10 +59,10 @@ def build_nba(db_path: Path) -> Path:
     )
     rows: list[tuple] = []
     for year in range(YEAR_START, YEAR_END + 1):
-        # 8 MVP-ballot style rows per season
         for i in range(8):
             player = f"NBA Player {i} {year}"
             pts = 18.0 + i * 1.5 + (year - YEAR_START) * 0.01
+            threes = 0.5 + i * 0.2
             rows.append(
                 (
                     player,
@@ -79,13 +81,13 @@ def build_nba(db_path: Path) -> Path:
                     1.0,
                     0.5,
                     0.45,
+                    threes,
                     0.35,
                     0.80,
                     5.0 + i,
                     0.15,
                 )
             )
-        # Plant known 2024 scoring leader above the pack
         if year == 2024:
             name, pts = NBA_2024_SCORING_LEADER
             rows.append(
@@ -106,10 +108,38 @@ def build_nba(db_path: Path) -> Path:
                     1.3,
                     0.9,
                     0.58,
+                    1.2,
                     0.35,
                     0.82,
                     17.0,
                     0.30,
+                )
+            )
+        if year == 2016:
+            name, threes = NBA_2016_THREES_LEADER
+            rows.append(
+                (
+                    name,
+                    year,
+                    28,
+                    "GSW",
+                    40.0,
+                    800.0,
+                    1000.0,
+                    0.8,
+                    79,
+                    34.0,
+                    30.1,
+                    5.4,
+                    6.7,
+                    2.1,
+                    0.2,
+                    0.50,
+                    threes,
+                    0.45,
+                    0.91,
+                    15.0,
+                    0.28,
                 )
             )
 
@@ -117,13 +147,14 @@ def build_nba(db_path: Path) -> Path:
         """
         INSERT INTO player_mvp_stats (
             player, year, age, team, first_place, pts_won, pts_max, share,
-            g, mp, pts, trb, ast, stl, blk, fg_pct, c_3p_pct, ft_pct, ws, ws_48
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            g, mp, pts, trb, ast, stl, blk, fg_pct, c_3p, c_3p_pct, ft_pct, ws, ws_48
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         rows,
     )
     conn.execute("CREATE INDEX idx_nba_year ON player_mvp_stats(year)")
     conn.execute("CREATE INDEX idx_nba_pts ON player_mvp_stats(pts)")
+    conn.execute("CREATE INDEX idx_nba_3p ON player_mvp_stats(c_3p)")
     conn.commit()
     conn.close()
     return db_path

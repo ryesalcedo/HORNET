@@ -22,6 +22,7 @@ REQUIRED = {
             "pts_won",
             "pts_max",
             "g",
+            "c_3p",
             "c_3p_pct",
         }
     },
@@ -122,8 +123,9 @@ def test_validate_accepts_real_scoring_sql(settings):
     assert err is None
 
 
-def test_nba_has_pct_not_threes_made(settings):
+def test_nba_detects_threes_made_and_pct(settings):
+    from hornet.db.shooting_cols import threes_made_column, threes_pct_column
+
     cols = all_columns(load_schema_cache(settings.schema_cache_dir / "nba.json"))
-    assert "c_3p_pct" in cols
-    assert "fg3" not in cols
-    assert "threes_made" not in cols
+    assert threes_made_column(cols) == "c_3p"
+    assert threes_pct_column(cols) == "c_3p_pct"
