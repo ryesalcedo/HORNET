@@ -49,25 +49,27 @@ export OLLAMA_NUM_PARALLEL=1
 ## Setup
 
 ```bash
-cd ~/Projects/HORNET
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+# Ubuntu example — install into /hornet
+sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3 git
+sudo git clone https://github.com/ryesalcedo/HORNET.git /hornet
+sudo chown -R "$USER:$USER" /hornet
+cd /hornet
 
-cp .env.example .env   # optional overrides
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .    # use python -m pip (not system pip)
+cp -n .env.example .env
 ```
 
-**Linux server / Ubuntu / Rocky (128 GB):** full file inventory and non-skipping
-steps are in [docs/INSTALL.md](docs/INSTALL.md). Rocky package notes:
-[docs/ROCKY_LINUX.md](docs/ROCKY_LINUX.md).
+Copy `nba.db` / `nfl.db` / `nhl.db` into `data/databases/` (not in GitHub).
 
-GitHub has the **app source + config**. It does **not** ship SQLite DBs or
-Ollama model weights — you must copy `nba.db` / `nfl.db` / `nhl.db` (or CSVs)
-and pull models yourself.
+**Full Linux how-to** (Ollama, troubleshooting, ZIP fallback):
+[docs/INSTALL.md](docs/INSTALL.md). Rocky: [docs/ROCKY_LINUX.md](docs/ROCKY_LINUX.md).
 
 ## Add your data
 
-Drop CSVs into:
+Prefer copying existing SQLite DBs into `data/databases/`. Or drop CSVs into:
 
 ```
 data/raw/nba/*.csv
@@ -86,15 +88,18 @@ python scripts/import_csv.py --sport nba --replace
 Rebuild schema cache (also runs automatically at startup):
 
 ```bash
+export HORNET_ROOT=/hornet   # or your install path
 python scripts/build_schema_cache.py
 ```
 
 ## Run
 
 ```bash
+cd /hornet
+source .venv/bin/activate
+export HORNET_ROOT=/hornet
 hornet
-# or
-python -m hornet
+# or: python -m hornet
 ```
 
 ### REPL commands

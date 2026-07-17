@@ -115,49 +115,54 @@ ollama list
 
 ## 4. Clone HORNET
 
+Prefer `/hornet` (matches Ubuntu install docs). GitHub rejects account passwords
+for git — use HTTPS with no login, or see INSTALL.md ZIP fallback.
+
 ```bash
-cd ~/Projects
-git clone https://github.com/ryesalcedo/HORNET.git
-cd HORNET
+sudo mkdir -p /hornet
+sudo git clone https://github.com/ryesalcedo/HORNET.git /hornet
+sudo chown -R "$USER:$USER" /hornet
+cd /hornet
 ```
 
-Or update an existing clone:
+Or under `~/Projects`:
 
 ```bash
+mkdir -p ~/Projects
+git clone https://github.com/ryesalcedo/HORNET.git ~/Projects/HORNET
 cd ~/Projects/HORNET
-git pull origin master
 ```
 
 ---
 
 ## 5. Python environment
 
+Use a venv and `python -m pip` (avoids externally-managed / wrong pip):
+
 ```bash
-cd ~/Projects/HORNET
+cd /hornet   # or ~/Projects/HORNET
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .
+python -m pip install --upgrade pip
+python -m pip install -e .
+cp -n .env.example .env
+export HORNET_ROOT=/hornet   # set to your actual install path
 ```
 
-Confirm the CLI entry point:
+Confirm:
 
 ```bash
+which python   # must be .../.venv/bin/python
 which hornet
-hornet --help 2>/dev/null || python -m hornet --help 2>/dev/null || true
 ```
 
-(`hornet` launches the REPL; there is no `--help` flag yet — use `python -m hornet`.)
+(`hornet` launches the REPL; there is no `--help` flag.)
 
 ---
 
 ## 6. Environment file
 
-```bash
-cp .env.example .env
-```
-
-Default `.env` (edit if needed):
+`.env` comes from `.env.example` (step 5). Defaults:
 
 ```env
 OLLAMA_HOST=http://localhost:11434
@@ -169,12 +174,6 @@ HORNET_STATS_MODEL=mathstral:7b
 HORNET_RESIDENT_MODELS=true
 HORNET_DATA_DIR=data
 HORNET_LOG_LEVEL=INFO
-```
-
-Load env in your shell session (optional; `python-dotenv` loads `.env` at runtime):
-
-```bash
-set -a && source .env && set +a
 ```
 
 ---
@@ -264,8 +263,9 @@ python scripts/import_csv.py --sport nba --replace
 ## 9. Run HORNET
 
 ```bash
-cd ~/Projects/HORNET
+cd /hornet   # or ~/Projects/HORNET
 source .venv/bin/activate
+export HORNET_ROOT=/hornet
 hornet
 ```
 
@@ -291,8 +291,8 @@ Example prompts:
 Add to `~/.bashrc`:
 
 ```bash
-export HORNET_HOME="$HOME/Projects/HORNET"
-alias hornet='cd "$HORNET_HOME" && source .venv/bin/activate && hornet'
+export HORNET_HOME="/hornet"
+alias hornet='cd "$HORNET_HOME" && source .venv/bin/activate && export HORNET_ROOT="$HORNET_HOME" && hornet'
 ```
 
 ---
@@ -324,6 +324,10 @@ ls -la data/databases/
 python scripts/import_csv.py
 ```
 
+### `externally-managed-environment` / wrong pip
+
+Use the venv and `python -m pip install -e .` (never system/`sudo` pip).
+
 ### Out of VRAM
 
 Default config keeps all models resident (`resident_models: true`, `keep_alive: -1`). For **≤16 GB VRAM**, set in `config/settings.yaml`:
@@ -344,7 +348,7 @@ sudo setsebool -P httpd_can_network_connect 1
 
 ### SSH data transfer from Windows
 
-Install OpenSSH client on Windows, or use WinSCP / FileZilla to copy `data/raw/` into `~/Projects/HORNET/data/raw/`.
+Install OpenSSH client on Windows, or use WinSCP / FileZilla to copy `data/raw/` or `*.db` into the install tree.
 
 ---
 
@@ -354,8 +358,8 @@ Install OpenSSH client on Windows, or use WinSCP / FileZilla to copy `data/raw/`
 - [ ] NVIDIA driver + `nvidia-smi` (if using GPU)
 - [ ] Ollama installed, running, multi-model override set
 - [ ] Models pulled: 32b coder, sqlcoder 15b, mathstral
-- [ ] `git clone` HORNET; `pip install -e .` in `.venv`
-- [ ] `.env` copied from `.env.example`
+- [ ] `git clone` into `/hornet` (or chosen path); `python -m pip install -e .` in `.venv`
+- [ ] `.env` copied from `.env.example`; `HORNET_ROOT` set
 - [ ] CSVs (or `.db` files) copied from Windows
-- [ ] `python scripts/import_csv.py` (if using CSVs)
+- [ ] `python scripts/import_csv.py` (if using CSVs) or DBs in `data/databases/`
 - [ ] `hornet` starts; `/schema` shows `ok`; `/models` lists pulled models

@@ -5,6 +5,9 @@ Linux (Ubuntu / Rocky) without skipping steps.
 
 Default profile: **128 GB VRAM**, all three models resident.
 
+Proven install path on Ubuntu: clone into **`/hornet`**, use a **venv**, install
+with **`python -m pip`** (not system `pip`).
+
 ---
 
 ## What GitHub includes vs what you must supply
@@ -26,40 +29,18 @@ HORNET/
 │   ├── cli.py
 │   ├── config.py
 │   ├── session.py
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── executor.py
-│   │   ├── math_agent.py
-│   │   ├── orchestrator.py
-│   │   ├── planner.py
-│   │   ├── registry.py
-│   │   ├── sql_agent.py
-│   │   └── stats_agent.py
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── column_hints.py
-│   │   ├── connection.py
-│   │   ├── csv_import.py
-│   │   └── schema.py
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   ├── model_manager.py
-│   │   └── ollama_client.py
-│   └── tools/
-│       ├── __init__.py
-│       └── registry.py
+│   ├── agents/          # 8 Python files
+│   ├── db/              # 5 Python files
+│   ├── llm/             # 3 Python files
+│   └── tools/           # 2 Python files
 ├── scripts/
 │   ├── import_csv.py
 │   └── build_schema_cache.py
 └── data/
-    ├── databases/          # empty placeholders (.gitkeep)
+    ├── databases/          # empty placeholders (.gitkeep) — put .db files here
     ├── schema/             # empty placeholders (.gitkeep)
     └── raw/{nba,nfl,nhl}/  # empty placeholders (.gitkeep)
 ```
-
-If `/opt/hornet/app/HORNET` is empty, the app was never written. Clone, unzip,
-copy from your Windows PC, or run `scripts/install_hornet.py` (embeds every
-file above).
 
 ### Not in GitHub (you must provide)
 
@@ -71,7 +52,7 @@ file above).
 
 ---
 
-## Path A — Clone from GitHub (recommended when network allows)
+## Path A — Clone into `/hornet` (recommended)
 
 ### 1. System packages (Ubuntu)
 
@@ -88,9 +69,71 @@ sudo dnf install -y git curl tar gcc make epel-release
 sudo dnf install -y python3.11 python3.11-pip python3.11-devel ripgrep
 ```
 
-Use `python3.11` instead of `python3` in the steps below on Rocky.
+Use `python3.11` instead of `python3` on Rocky.
 
-### 2. Ollama + 128 GB resident models
+### 2. Clone (HTTPS — no GitHub password)
+
+GitHub rejects account passwords for git. For a public repo, clone with no login:
+
+```bash
+sudo mkdir -p /hornet
+sudo git clone https://github.com/ryesalcedo/HORNET.git /hornet
+sudo chown -R "$USER:$USER" /hornet
+cd /hornet
+```
+
+If clone asks for a password and fails, use the ZIP instead:
+
+```bash
+sudo apt install -y unzip
+curl -L -o /tmp/HORNET.zip https://github.com/ryesalcedo/HORNET/archive/refs/heads/master.zip
+sudo mkdir -p /hornet
+sudo unzip -o /tmp/HORNET.zip -d /tmp
+sudo rm -rf /hornet/*
+sudo mv /tmp/HORNET-master/* /hornet/
+sudo chown -R "$USER:$USER" /hornet
+cd /hornet
+```
+
+Confirm source:
+
+```bash
+ls pyproject.toml config/settings.yaml hornet/cli.py scripts/build_schema_cache.py
+```
+
+### 3. Python venv (required on Ubuntu)
+
+Do **not** `pip install` into system Python — Ubuntu returns
+`externally-managed-environment`. Always use a venv and `python -m pip`:
+
+```bash
+cd /hornet
+python3 -m venv .venv
+source .venv/bin/activate
+
+# these must all point under /hornet/.venv
+echo "$VIRTUAL_ENV"
+which python
+which pip
+
+python -m pip install --upgrade pip
+python -m pip install -e .
+cp -n .env.example .env
+```
+
+If `python3 -m venv` fails, install `python3-venv` (step 1) and retry.
+Never use `sudo pip`.
+
+### 4. Databases
+
+```bash
+mkdir -p /hornet/data/databases
+# copy your files into place, e.g.:
+# cp /path/to/nba.db /path/to/nfl.db /path/to/nhl.db /hornet/data/databases/
+ls -la /hornet/data/databases/
+```
+
+### 5. Ollama + models
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -110,135 +153,118 @@ ollama pull mathstral:7b
 ollama list
 ```
 
-### 3. HORNET source + Python env
+### 6. Schema cache + run
 
 ```bash
-sudo mkdir -p /opt/hornet/app /opt/hornet/dbs
-cd /opt/hornet/app
-sudo git clone https://github.com/ryesalcedo/HORNET.git HORNET
-cd /opt/hornet/app/HORNET
-
-python3 -m venv .venv
+cd /hornet
 source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .
-
-cp .env.example .env
-export HORNET_ROOT=/opt/hornet/app/HORNET
-```
-
-Confirm source is present:
-
-```bash
-ls pyproject.toml config/settings.yaml hornet/cli.py scripts/build_schema_cache.py
-```
-
-### 4. Databases
-
-Put DBs here first (from your Windows machine or USB):
-
-```bash
-# expected
-ls /opt/hornet/dbs/nba.db /opt/hornet/dbs/nfl.db /opt/hornet/dbs/nhl.db
-
-cp /opt/hornet/dbs/*.db /opt/hornet/app/HORNET/data/databases/
+export HORNET_ROOT=/hornet
 python scripts/build_schema_cache.py
-```
-
-Or import from CSVs:
-
-```bash
-# copy CSVs into data/raw/{nba,nfl,nhl}/ then:
-python scripts/import_csv.py
-python scripts/build_schema_cache.py
-```
-
-### 5. Run
-
-```bash
-export HORNET_ROOT=/opt/hornet/app/HORNET
-cd "$HORNET_ROOT"
-source .venv/bin/activate
 hornet
 ```
 
-In the REPL: `/schema` (DBs ok), `/models` (three models listed).
+In the REPL:
+
+- `/schema` — each sport should show `ok`
+- `/models` — lists the three pulled models
+- `/exit` — quit
 
 Optional alias:
 
 ```bash
-echo 'alias hornet="export HORNET_ROOT=/opt/hornet/app/HORNET; source /opt/hornet/app/HORNET/.venv/bin/activate; hornet"' >> ~/.bashrc
+echo 'alias hornet="cd /hornet && source .venv/bin/activate && export HORNET_ROOT=/hornet && hornet"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ---
 
-## Path B — No git / no ZIP: single-file installer
+## Every time you start HORNET later
 
-Transfers **one** Python file that writes the full tree (same files as GitHub).
+```bash
+cd /hornet
+source .venv/bin/activate
+export HORNET_ROOT=/hornet
+hornet
+```
 
-### On a machine that has this repo
+Ollama must already be running (`systemctl status ollama` or `ollama list`).
+
+---
+
+## Path B — No git: single-file installer
+
+On a machine that has this repo:
 
 ```bash
 python scripts/generate_installer.py   # refreshes scripts/install_hornet.py
 ```
 
-Copy `scripts/install_hornet.py` to the target box (USB, scp, etc.).
-
-### On the target box
+Copy `scripts/install_hornet.py` to the target box. Put DBs in `/opt/hornet/dbs/`,
+then:
 
 ```bash
 sudo apt install -y python3 python3-venv python3-pip ripgrep sqlite3
-# Ollama + pulls from Path A step 2 (if not done)
-
-sudo mkdir -p /opt/hornet/dbs
-# place nba.db nfl.db nhl.db in /opt/hornet/dbs/
-
 sudo python3 install_hornet.py
-
 export HORNET_ROOT=/opt/hornet/app/HORNET
 /opt/hornet/app/HORNET/.venv/bin/hornet
 ```
 
+(This path still installs under `/opt/hornet/app/HORNET` by default.)
+
 ---
 
-## Path C — Copy full tree from Windows
+## Path C — Copy tarball from Windows
 
 ```powershell
 cd "C:\Users\Ryan Salcedo\OneDrive\Desktop\HORNET\HORNET"
 tar -czf HORNET-app.tar.gz --exclude=.venv --exclude=__pycache__ --exclude=.git --exclude="*.db" --exclude=.test-install .
 scp HORNET-app.tar.gz USER@HOST:/tmp/
-scp data\databases\*.db USER@HOST:/opt/hornet/dbs/
 ```
 
 On Ubuntu:
 
 ```bash
-sudo mkdir -p /opt/hornet/app/HORNET /opt/hornet/dbs
-sudo tar -xzf /tmp/HORNET-app.tar.gz -C /opt/hornet/app/HORNET
-cd /opt/hornet/app/HORNET
+sudo mkdir -p /hornet
+sudo tar -xzf /tmp/HORNET-app.tar.gz -C /hornet
+sudo chown -R "$USER:$USER" /hornet
+cd /hornet
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-cp .env.example .env
-cp /opt/hornet/dbs/*.db data/databases/
-export HORNET_ROOT=/opt/hornet/app/HORNET
+python -m pip install --upgrade pip
+python -m pip install -e .
+cp -n .env.example .env
+# copy *.db into data/databases/
+export HORNET_ROOT=/hornet
 python scripts/build_schema_cache.py
 hornet
 ```
 
 ---
 
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| `password authentication is not supported` | Use HTTPS clone with no password, or ZIP download |
+| `externally-managed-environment` | Use venv + `python -m pip` (not system/`sudo` pip) |
+| `No module named yaml` | Venv missing deps — `source .venv/bin/activate` then `python -m pip install -e .` |
+| `Ollama is not reachable` | `sudo systemctl start ollama` |
+| `/schema` shows `missing db` | Copy `.db` files into `$HORNET_ROOT/data/databases/` |
+
+---
+
 ## Checklist (do not skip)
 
-- [ ] `python3` / venv / pip / `ripgrep` / `sqlite3` installed
-- [ ] Ollama running; override `MAX_LOADED=3` / `NUM_PARALLEL=4`
-- [ ] Models pulled: `qwen2.5-coder:32b`, `sqlcoder:15b`, `mathstral:7b`
-- [ ] App tree complete (`pyproject.toml` + `hornet/` + `config/` present)
-- [ ] `pip install -e .` inside `.venv`
-- [ ] `.env` from `.env.example`
+- [ ] `python3-venv` / `ripgrep` / `sqlite3` installed
+- [ ] Source present under `/hornet` (or your chosen root)
+- [ ] `.venv` created; `which python` is inside `.venv`
+- [ ] `python -m pip install -e .` succeeded
+- [ ] `.env` copied from `.env.example`
 - [ ] `nba.db` `nfl.db` `nhl.db` under `data/databases/`
+- [ ] Ollama running; models pulled
+- [ ] `export HORNET_ROOT=/hornet`
 - [ ] `python scripts/build_schema_cache.py`
-- [ ] `HORNET_ROOT` set; `hornet` starts; `/schema` shows `ok`
+- [ ] `hornet` starts; `/schema` shows `ok`
 
 ---
 
