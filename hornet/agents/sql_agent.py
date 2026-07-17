@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 SQL_PREFIX = """You are SQLCoder. Output ONE SQLite SELECT statement.
 The LIVE SCHEMA block lists every real table and column — use ONLY those names.
 Never invent columns. Never substitute a different metric for a missing one.
+Prefer simple SELECT … WHERE year = … ORDER BY <metric> DESC LIMIT N for leader questions.
 If the schema cannot answer the question, output exactly: UNSUPPORTED
 No markdown."""
 
@@ -52,9 +53,39 @@ class SQLAgent:
     def _limit(question: str) -> int:
         if m := re.search(r"top\s+(\d+)", question.lower()):
             return int(m.group(1))
-        if re.search(r"\bleader\b", question.lower()) or "top player" in question.lower():
+        if re.search(r"\b(leader|leading|most|highest|best)\b", question.lower()):
+            return 5
+        if "top player" in question.lower():
             return 1
         return 5
+
+    @staticmethod
+    def _is_ambiguous(question: str) -> bool:
+        """Skip deterministic fast-path when the ask needs judgment / multi-metric SQL."""
+        q = question.lower()
+        if re.search(
+            r"\b(vs\.?|versus|compare|comparison|correlat|difference|ratio|"
+            r"both|either|average of|per game vs|and also)\b",
+            q,
+        ):
+            return True
+        if len(re.findall(r"\b(20\d{2})\b", q)) > 1:
+            return True
+        # two distinct leaderboard metrics in one question
+        metrics = 0
+        for pat in (
+            r"\brush",
+            r"\bpass",
+            r"\breceiv",
+            r"\bpoint",
+            r"\bgoal",
+            r"\bassists?\b",
+            r"\bthree",
+            r"\bsack",
+        ):
+            if re.search(pat, q):
+                metrics += 1
+        return metrics >= 2
 
     @staticmethod
     def _asks_threes_made(question: str) -> bool:
@@ -97,7 +128,6 @@ class SQLAgent:
         return None
 
     def _ensure_valid(self, sport: str, sql: str, cache: dict[str, Any]) -> str:
-        """Validate against cached schema + SQLite EXPLAIN; raise on failure."""
         bad = validate_sql_against_schema(sql, cache)
         if bad:
             raise RuntimeError(bad)
@@ -106,18 +136,30 @@ class SQLAgent:
         if re.search(r"pts\s*>=\s*3", sql, re.I) and re.search(r"three", sql, re.I):
             raise RuntimeError("Rejected SQL: pts >= 3 is not three-pointers made.")
 
-        db_path = self.settings.db_path(sport)
-        explain_err = explain_select(db_path, sql)
+        explain_err = explain_select(self.settings.db_path(sport), sql)
         if explain_err:
             raise RuntimeError(f"SQLite rejected SQL: {explain_err}")
         return sql
 
     @staticmethod
-    def _fallback_sql(sport: str, question: str, cache: dict[str, Any]) -> str | None:
-        """Deterministic SQL for common patterns — only if columns exist in live schema."""
+    def _pattern_sql(
+        sport: str,
+        question: str,
+        cache: dict[str, Any],
+        *,
+        strict: bool,
+    ) -> str | None:
+        """Deterministic leaderboard SQL when the ask is clear and columns exist.
+
+        strict=True  → fast path (efficiency): only unambiguous leaderboard asks
+        strict=False → recovery path after SQLCoder fails validation
+        """
         q = question.lower()
         year_match = re.search(r"\b(20\d{2})\b", q)
         year = year_match.group(1) if year_match else None
+        if not year:
+            return None
+
         limit = SQLAgent._limit(question)
         cols = all_columns(cache)
 
@@ -127,29 +169,49 @@ class SQLAgent:
         def has(*names: str) -> bool:
             return all(n in cols for n in names)
 
-        if sport == "nba" and year and re.search(r"point|scor|ppg", q) and has("player", "pts", "year"):
-            select_cols = "player, pts, g" if limit == 1 and "g" in cols else "player, pts"
-            return (
-                f"SELECT {select_cols} FROM player_mvp_stats "
-                f"WHERE year = {year} ORDER BY pts DESC LIMIT {limit}"
-            )
+        leaderish = bool(
+            re.search(r"\b(most|highest|leading|leader|top|best|who led|who had)\b", q)
+        )
+        if strict and not leaderish:
+            return None
 
-        if sport == "nfl" and year:
-            if re.search(r"pass", q) and re.search(r"yard|yds", q) and has("player", "yds", "year"):
+        if sport == "nba" and has("player", "pts", "year"):
+            scoring = bool(
+                re.search(r"\b(ppg|points?\s+per\s+game|scoring)\b", q)
+                or re.search(r"\b(most|highest|leading|top)\b.{0,40}\bpoints?\b", q)
+                or re.search(r"\bpoints?\b.{0,40}\b(leader|most|highest)\b", q)
+            )
+            if scoring and not re.search(r"\b(mvp vote|pts_won|pts_max)\b", q):
+                select_cols = "player, pts, g" if "g" in cols else "player, pts"
+                return (
+                    f"SELECT {select_cols} FROM player_mvp_stats "
+                    f"WHERE year = {year} ORDER BY pts DESC LIMIT {limit}"
+                )
+
+        if sport == "nfl":
+            if (
+                re.search(r"\b(pass(ing)?|quarterback|\bqb\b)\b", q)
+                and re.search(r"\b(yard|yards|yds)\b", q)
+                and has("player", "yds", "year")
+            ):
                 team = ", team" if "team" in cols else ""
                 return (
                     f"SELECT player{team}, yds FROM passing "
                     f"WHERE year = {year} ORDER BY yds DESC LIMIT {limit}"
                 )
-            if re.search(r"pass", q) and re.search(r"td|touchdown", q) and has("player", "td", "year"):
+            if (
+                re.search(r"\b(pass(ing)?|quarterback|\bqb\b)\b", q)
+                and re.search(r"\b(td|tds|touchdown)\b", q)
+                and has("player", "td", "year")
+            ):
                 team = ", team" if "team" in cols else ""
                 return (
                     f"SELECT player{team}, td FROM passing "
                     f"WHERE year = {year} ORDER BY td DESC LIMIT {limit}"
                 )
             if (
-                re.search(r"rush", q)
-                and re.search(r"yard|yds", q)
+                re.search(r"\b(rush|rushing)\b", q)
+                and re.search(r"\b(yard|yards|yds)\b", q)
                 and has("player", "rushing_yds", "year")
             ):
                 team = ", team" if "team" in cols else ""
@@ -158,8 +220,8 @@ class SQLAgent:
                     f"WHERE year = {year} ORDER BY rushing_yds DESC LIMIT {limit}"
                 )
             if (
-                re.search(r"receiv", q)
-                and re.search(r"yard|yds", q)
+                re.search(r"\b(receiv|receiving|reception)\b", q)
+                and re.search(r"\b(yard|yards|yds)\b", q)
                 and has("player", "receiving_yds", "year")
             ):
                 team = ", team" if "team" in cols else ""
@@ -168,34 +230,42 @@ class SQLAgent:
                     f"WHERE year = {year} ORDER BY receiving_yds DESC LIMIT {limit}"
                 )
 
-        if (
-            sport == "nhl"
-            and year
-            and re.search(r"point|scor", q)
-            and has("player", "player_pts", "year")
-        ):
-            extra = []
-            for c in ("team_full", "player_gp", "g", "a"):
-                if c in cols:
-                    extra.append(c)
-            select_cols = ", ".join(["player", *extra, "player_pts"])
-            return (
-                f"SELECT {select_cols} FROM player_team_stats "
-                f"WHERE year = {year} ORDER BY player_pts DESC LIMIT {limit}"
+        if sport == "nhl" and has("player", "player_pts", "year"):
+            points = bool(
+                re.search(r"\b(player[_\s]?pts|scoring leader|point leaders?)\b", q)
+                or re.search(r"\b(most|highest|leading|top)\b.{0,40}\bpoints?\b", q)
             )
+            if points or (not strict and re.search(r"\bpoints?\b", q)):
+                extra = [c for c in ("team_full", "player_gp", "g", "a") if c in cols]
+                select_cols = ", ".join(["player", *extra, "player_pts"])
+                return (
+                    f"SELECT {select_cols} FROM player_team_stats "
+                    f"WHERE year = {year} ORDER BY player_pts DESC LIMIT {limit}"
+                )
 
         return None
 
     def _schema_block(self, cache: dict, sport: str, question: str) -> str:
         tables = nfl_tables_for_question(question) if sport == "nfl" else None
-        # No table cap — SQLCoder must see the full focused set
         return schema_text_sql(cache, tables=tables, max_tables=None)
+
+    def _sqlcoder(self, sport: str, question: str, cache: dict[str, Any]) -> str:
+        prompt = (
+            f"Schema:\n{self._schema_block(cache, sport, question)}\n\n"
+            f"Hints:\n{dynamic_hints(sport, cache)}\n\n"
+            f"Question: {question}\n\nSQL:"
+        )
+        with self.models.use(self.settings.sql) as model_cfg:
+            raw = self.client.generate_completion(model_cfg, prompt, prefix=SQL_PREFIX)
+        return self._clean_sql(raw)
 
     def _generate(self, sport: str, question: str) -> str:
         sport = sport.lower()
         cache = load_schema_cache(self.settings.schema_cache_dir / f"{sport}.json")
         if cache is None:
-            raise RuntimeError(f"No schema cache for {sport} — run: python scripts/build_schema_cache.py")
+            raise RuntimeError(
+                f"No schema cache for {sport} — run: python scripts/build_schema_cache.py"
+            )
         if not cache.get("exists"):
             raise RuntimeError(f"Database missing for {sport}: {cache.get('sport_db')}")
 
@@ -203,41 +273,45 @@ class SQLAgent:
         if unsupported:
             raise RuntimeError(unsupported)
 
-        prompt = (
-            f"Schema:\n{self._schema_block(cache, sport, question)}\n\n"
-            f"Hints:\n{dynamic_hints(sport, cache)}\n\n"
-            f"Question: {question}\n\nSQL:"
-        )
+        # 1) Fast path — high-confidence leaderboard patterns (no LLM round-trip)
+        if not self._is_ambiguous(question):
+            fast = self._pattern_sql(sport, question, cache, strict=True)
+            if fast:
+                try:
+                    sql = self._ensure_valid(sport, fast, cache)
+                    logger.info("sql_agent: fast-path pattern")
+                    return sql
+                except RuntimeError as exc:
+                    logger.warning("sql_agent: fast-path rejected (%s)", exc)
 
-        fallback = self._fallback_sql(sport, question, cache)
-        if fallback:
-            logger.info("sql_agent: using pattern fallback")
-            return self._ensure_valid(sport, fallback, cache)
-
-        with self.models.use(self.settings.sql) as model_cfg:
-            raw = self.client.generate_completion(model_cfg, prompt, prefix=SQL_PREFIX)
-
-        sql = self._clean_sql(raw)
-        if sql == "UNSUPPORTED":
+        # 2) SQLCoder with full live schema
+        raw_sql = self._sqlcoder(sport, question, cache)
+        if raw_sql == "UNSUPPORTED":
             raise RuntimeError(
                 f"Schema for {sport} cannot answer this question with available columns. "
                 f"Known tables: {cache.get('table_names', [])}"
             )
-        if sql.upper().startswith("SELECT"):
+        if raw_sql.upper().startswith("SELECT"):
             try:
-                return self._ensure_valid(sport, sql, cache)
+                sql = self._ensure_valid(sport, raw_sql, cache)
+                logger.info("sql_agent: SQLCoder")
+                return sql
             except RuntimeError as exc:
-                logger.warning("sql_agent: rejected generated SQL (%s)", exc)
-                fallback = self._fallback_sql(sport, question, cache)
-                if fallback:
-                    return self._ensure_valid(sport, fallback, cache)
-                raise
+                logger.warning("sql_agent: SQLCoder rejected (%s)", exc)
+        else:
+            logger.warning("sql_agent: SQLCoder non-SELECT (%r)", raw_sql[:80])
 
-        logger.warning("sql_agent: SQLCoder failed (%r)", raw[:80])
-        fallback = self._fallback_sql(sport, question, cache)
-        if fallback:
-            return self._ensure_valid(sport, fallback, cache)
-        raise RuntimeError(f"SQLCoder returned invalid SQL: {raw[:120]!r}")
+        # 3) Recovery — looser patterns after LLM failure
+        recovery = self._pattern_sql(sport, question, cache, strict=False)
+        if recovery:
+            sql = self._ensure_valid(sport, recovery, cache)
+            logger.info("sql_agent: recovery pattern")
+            return sql
+
+        raise RuntimeError(
+            f"Could not produce valid SQL for {sport!r}. "
+            f"Last model output: {raw_sql[:160]!r}"
+        )
 
     def run(self, sport: str, question: str, session: Session) -> dict[str, Any]:
         try:
