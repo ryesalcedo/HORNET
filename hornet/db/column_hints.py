@@ -14,7 +14,7 @@ NBA database (table: player_mvp_stats) — MVP voting + per-game box stats for n
 - One row per player per season (MVP ballot rows — not the full league)
 
 Example scoring query:
-SELECT player, pts FROM player_mvp_stats WHERE year = 2024 ORDER BY pts DESC LIMIT 3;"""
+SELECT player, pts FROM player_mvp_stats WHERE year = 2024 ORDER BY pts DESC LIMIT 3;""",
     "nfl": """\
 NFL database — use the correct table for the stat type:
 - passing: QB stats — yds = passing yards, td = passing TDs, cmp, att, rate
