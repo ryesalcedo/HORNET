@@ -21,3 +21,4 @@ data/schema/*.json
 HORNET-app.tar.gz
 hornet-app.b64
 *.tar.gz
+tests/fixtures/databases/
