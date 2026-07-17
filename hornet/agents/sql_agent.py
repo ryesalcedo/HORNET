@@ -5,10 +5,16 @@ import re
 from typing import Any
 
 from hornet.config import Settings
-from hornet.db.column_hints import SPORT_HINTS
+from hornet.db.column_hints import dynamic_hints
 from hornet.db import load_schema_cache
 from hornet.db.connection import execute_query
-from hornet.db.schema import nfl_tables_for_question, schema_text_sql
+from hornet.db.schema import (
+    all_columns,
+    explain_select,
+    nfl_tables_for_question,
+    schema_text_sql,
+    validate_sql_against_schema,
+)
 from hornet.llm.model_manager import ModelManager
 from hornet.llm.ollama_client import OllamaClient
 from hornet.session import Session
@@ -16,8 +22,8 @@ from hornet.session import Session
 logger = logging.getLogger(__name__)
 
 SQL_PREFIX = """You are SQLCoder. Output ONE SQLite SELECT statement.
-Use ONLY column names that appear in the schema list. Never invent columns.
-Never substitute a different metric (e.g. do not use pts or COUNT(*) for threes made).
+The LIVE SCHEMA block lists every real table and column — use ONLY those names.
+Never invent columns. Never substitute a different metric for a missing one.
 If the schema cannot answer the question, output exactly: UNSUPPORTED
 No markdown."""
 
@@ -51,26 +57,16 @@ class SQLAgent:
         return 5
 
     @staticmethod
-    def _schema_columns(cache: dict[str, Any]) -> set[str]:
-        cols: set[str] = set()
-        for meta in cache.get("tables", {}).values():
-            for c in meta.get("columns", []):
-                cols.add(str(c["name"]).lower())
-        return cols
-
-    @staticmethod
     def _asks_threes_made(question: str) -> bool:
         q = question.lower()
         if not re.search(r"\b(three|threes|3[- ]?pt|3pm|3p)\b", q):
             return False
-        # percentage questions are fine if a pct column exists
         if re.search(r"\b(pct|percent|percentage|%)\b", q):
             return False
         return True
 
     @staticmethod
     def _threes_made_column(columns: set[str]) -> str | None:
-        """Return a season/total threes-made column if present (not percentage)."""
         candidates = (
             "fg3",
             "fg3m",
@@ -85,7 +81,6 @@ class SQLAgent:
         for name in candidates:
             if name in columns:
                 return name
-        # prefer non-pct columns that look like 3p made
         for name in sorted(columns):
             if re.search(r"(^|_)(3p|fg3|three)", name) and "pct" not in name and "attempt" not in name:
                 return name
@@ -93,138 +88,99 @@ class SQLAgent:
 
     @classmethod
     def _unsupported_reason(cls, sport: str, question: str, cache: dict[str, Any]) -> str | None:
-        cols = cls._schema_columns(cache)
+        cols = all_columns(cache)
         if sport == "nba" and cls._asks_threes_made(question) and not cls._threes_made_column(cols):
             return (
-                "This NBA database (player_mvp_stats) has no three-pointers-made / 3PM column. "
-                "It only has MVP voting and per-game box stats (and 3P% if present). "
-                "Cannot answer 'most threes made' from this data."
+                "This NBA database has no three-pointers-made / 3PM column in the live schema. "
+                "Cannot answer 'most threes made' from available columns."
             )
         return None
 
-    @classmethod
-    def _validate_sql(cls, sql: str, cache: dict[str, Any]) -> str | None:
-        """Return an error message if SQL references unknown identifiers suspiciously."""
-        cols = cls._schema_columns(cache)
-        tables = {t.lower() for t in cache.get("tables", {})}
-        # crude token scan — catch invented aliases used as source columns
-        tokens = set(re.findall(r"\b[a-z_][a-z0-9_]*\b", sql.lower()))
-        sql_keywords = {
-            "select",
-            "from",
-            "where",
-            "and",
-            "or",
-            "group",
-            "by",
-            "order",
-            "desc",
-            "asc",
-            "limit",
-            "as",
-            "count",
-            "sum",
-            "avg",
-            "min",
-            "max",
-            "distinct",
-            "join",
-            "on",
-            "left",
-            "right",
-            "inner",
-            "outer",
-            "having",
-            "case",
-            "when",
-            "then",
-            "else",
-            "end",
-            "null",
-            "not",
-            "in",
-            "is",
-            "between",
-            "like",
-            "cast",
-            "coalesce",
-        }
-        # known bad pattern: counting rows / pts threshold as "threes"
+    def _ensure_valid(self, sport: str, sql: str, cache: dict[str, Any]) -> str:
+        """Validate against cached schema + SQLite EXPLAIN; raise on failure."""
+        bad = validate_sql_against_schema(sql, cache)
+        if bad:
+            raise RuntimeError(bad)
         if re.search(r"count\s*\(\s*\*\s*\).*three|three.*count\s*\(\s*\*\s*\)", sql, re.I | re.S):
-            return "Rejected SQL: COUNT(*) is not three-pointers made."
-        if re.search(r"pts\s*>=\s*3", sql, re.I) and "three" in sql.lower():
-            return "Rejected SQL: pts >= 3 is not three-pointers made."
+            raise RuntimeError("Rejected SQL: COUNT(*) is not three-pointers made.")
+        if re.search(r"pts\s*>=\s*3", sql, re.I) and re.search(r"three", sql, re.I):
+            raise RuntimeError("Rejected SQL: pts >= 3 is not three-pointers made.")
 
-        # if SELECT aliases invent three_count without a real 3p source column
-        if "three_count" in tokens or "threes" in tokens:
-            if not cls._threes_made_column(cols):
-                return "Rejected SQL: no threes-made column in schema."
-
-        unknown = []
-        for tok in tokens:
-            if tok in sql_keywords or tok in cols or tok in tables:
-                continue
-            if tok.isdigit():
-                continue
-            # allow common aliases
-            if tok.endswith("_count") or tok in {"player", "team", "year"}:
-                continue
-            # flag tokens that look like columns but aren't in schema
-            if re.search(r"(yds|pts|td|three|fg|ast|reb|g|mp)", tok) and tok not in cols:
-                unknown.append(tok)
-        if unknown:
-            return f"Rejected SQL: unknown columns {sorted(set(unknown))} not in schema."
-        return None
+        db_path = self.settings.db_path(sport)
+        explain_err = explain_select(db_path, sql)
+        if explain_err:
+            raise RuntimeError(f"SQLite rejected SQL: {explain_err}")
+        return sql
 
     @staticmethod
-    def _fallback_sql(sport: str, question: str) -> str | None:
-        """Deterministic SQL for common patterns when SQLCoder fails."""
+    def _fallback_sql(sport: str, question: str, cache: dict[str, Any]) -> str | None:
+        """Deterministic SQL for common patterns — only if columns exist in live schema."""
         q = question.lower()
         year_match = re.search(r"\b(20\d{2})\b", q)
         year = year_match.group(1) if year_match else None
         limit = SQLAgent._limit(question)
+        cols = all_columns(cache)
 
-        # Never invent threes-made SQL — handled by _unsupported_reason
         if sport == "nba" and SQLAgent._asks_threes_made(question):
             return None
 
-        if sport == "nba" and year and re.search(r"point|scor|ppg", q):
-            cols = "player, pts, g" if limit == 1 else "player, pts"
+        def has(*names: str) -> bool:
+            return all(n in cols for n in names)
+
+        if sport == "nba" and year and re.search(r"point|scor|ppg", q) and has("player", "pts", "year"):
+            select_cols = "player, pts, g" if limit == 1 and "g" in cols else "player, pts"
             return (
-                f"SELECT {cols} FROM player_mvp_stats "
+                f"SELECT {select_cols} FROM player_mvp_stats "
                 f"WHERE year = {year} ORDER BY pts DESC LIMIT {limit}"
             )
 
         if sport == "nfl" and year:
-            if re.search(r"pass", q) and re.search(r"yard|yds", q):
+            if re.search(r"pass", q) and re.search(r"yard|yds", q) and has("player", "yds", "year"):
+                team = ", team" if "team" in cols else ""
                 return (
-                    f"SELECT player, team, yds FROM passing "
+                    f"SELECT player{team}, yds FROM passing "
                     f"WHERE year = {year} ORDER BY yds DESC LIMIT {limit}"
                 )
-            if re.search(r"pass", q) and re.search(r"td|touchdown", q):
+            if re.search(r"pass", q) and re.search(r"td|touchdown", q) and has("player", "td", "year"):
+                team = ", team" if "team" in cols else ""
                 return (
-                    f"SELECT player, team, td FROM passing "
+                    f"SELECT player{team}, td FROM passing "
                     f"WHERE year = {year} ORDER BY td DESC LIMIT {limit}"
                 )
-            if re.search(r"rush", q) and re.search(r"yard|yds", q):
+            if (
+                re.search(r"rush", q)
+                and re.search(r"yard|yds", q)
+                and has("player", "rushing_yds", "year")
+            ):
+                team = ", team" if "team" in cols else ""
                 return (
-                    f"SELECT player, team, rushing_yds FROM rushing_and_receiving "
+                    f"SELECT player{team}, rushing_yds FROM rushing_and_receiving "
                     f"WHERE year = {year} ORDER BY rushing_yds DESC LIMIT {limit}"
                 )
-            if re.search(r"receiv", q) and re.search(r"yard|yds", q):
+            if (
+                re.search(r"receiv", q)
+                and re.search(r"yard|yds", q)
+                and has("player", "receiving_yds", "year")
+            ):
+                team = ", team" if "team" in cols else ""
                 return (
-                    f"SELECT player, team, receiving_yds FROM rushing_and_receiving "
+                    f"SELECT player{team}, receiving_yds FROM rushing_and_receiving "
                     f"WHERE year = {year} ORDER BY receiving_yds DESC LIMIT {limit}"
                 )
 
-        if sport == "nhl" and year and re.search(r"point|scor", q):
-            cols = (
-                "player, team_full, player_pts, player_gp, g, a"
-                if limit == 1
-                else "player, team_full, player_pts, player_gp, g, a"
-            )
+        if (
+            sport == "nhl"
+            and year
+            and re.search(r"point|scor", q)
+            and has("player", "player_pts", "year")
+        ):
+            extra = []
+            for c in ("team_full", "player_gp", "g", "a"):
+                if c in cols:
+                    extra.append(c)
+            select_cols = ", ".join(["player", *extra, "player_pts"])
             return (
-                f"SELECT {cols} FROM player_team_stats "
+                f"SELECT {select_cols} FROM player_team_stats "
                 f"WHERE year = {year} ORDER BY player_pts DESC LIMIT {limit}"
             )
 
@@ -232,28 +188,31 @@ class SQLAgent:
 
     def _schema_block(self, cache: dict, sport: str, question: str) -> str:
         tables = nfl_tables_for_question(question) if sport == "nfl" else None
-        return schema_text_sql(cache, tables=tables)
+        # No table cap — SQLCoder must see the full focused set
+        return schema_text_sql(cache, tables=tables, max_tables=None)
 
     def _generate(self, sport: str, question: str) -> str:
-        cache = load_schema_cache(self.settings.schema_cache_dir / f"{sport.lower()}.json")
+        sport = sport.lower()
+        cache = load_schema_cache(self.settings.schema_cache_dir / f"{sport}.json")
         if cache is None:
-            raise RuntimeError(f"No schema cache for {sport}")
+            raise RuntimeError(f"No schema cache for {sport} — run: python scripts/build_schema_cache.py")
+        if not cache.get("exists"):
+            raise RuntimeError(f"Database missing for {sport}: {cache.get('sport_db')}")
 
-        unsupported = self._unsupported_reason(sport.lower(), question, cache)
+        unsupported = self._unsupported_reason(sport, question, cache)
         if unsupported:
             raise RuntimeError(unsupported)
 
         prompt = (
-            f"Schema:\n{self._schema_block(cache, sport.lower(), question)}\n\n"
-            f"Hints:\n{SPORT_HINTS.get(sport.lower(), '')}\n\n"
+            f"Schema:\n{self._schema_block(cache, sport, question)}\n\n"
+            f"Hints:\n{dynamic_hints(sport, cache)}\n\n"
             f"Question: {question}\n\nSQL:"
         )
 
-        # Try fallback first for known patterns — faster and more reliable than SQLCoder
-        fallback = self._fallback_sql(sport, question)
+        fallback = self._fallback_sql(sport, question, cache)
         if fallback:
             logger.info("sql_agent: using pattern fallback")
-            return fallback
+            return self._ensure_valid(sport, fallback, cache)
 
         with self.models.use(self.settings.sql) as model_cfg:
             raw = self.client.generate_completion(model_cfg, prompt, prefix=SQL_PREFIX)
@@ -261,18 +220,23 @@ class SQLAgent:
         sql = self._clean_sql(raw)
         if sql == "UNSUPPORTED":
             raise RuntimeError(
-                f"Schema for {sport} cannot answer this question with available columns."
+                f"Schema for {sport} cannot answer this question with available columns. "
+                f"Known tables: {cache.get('table_names', [])}"
             )
         if sql.upper().startswith("SELECT"):
-            bad = self._validate_sql(sql, cache)
-            if bad:
-                raise RuntimeError(bad)
-            return sql
+            try:
+                return self._ensure_valid(sport, sql, cache)
+            except RuntimeError as exc:
+                logger.warning("sql_agent: rejected generated SQL (%s)", exc)
+                fallback = self._fallback_sql(sport, question, cache)
+                if fallback:
+                    return self._ensure_valid(sport, fallback, cache)
+                raise
 
-        logger.warning("sql_agent: SQLCoder failed (%r), using fallback if possible", raw[:80])
-        fallback = self._fallback_sql(sport, question)
+        logger.warning("sql_agent: SQLCoder failed (%r)", raw[:80])
+        fallback = self._fallback_sql(sport, question, cache)
         if fallback:
-            return fallback
+            return self._ensure_valid(sport, fallback, cache)
         raise RuntimeError(f"SQLCoder returned invalid SQL: {raw[:120]!r}")
 
     def run(self, sport: str, question: str, session: Session) -> dict[str, Any]:

@@ -35,10 +35,41 @@ def _banner(settings) -> None:
             f"SQL: [cyan]{settings.sql.model}[/cyan]  "
             f"Stats: [cyan]{settings.stats.model}[/cyan] (on demand)\n"
             "Flow: [dim]plan → execute → math → synthesize[/dim]\n"
-            "Commands: [dim]/exit  /schema  /models  /trace  /last[/dim]",
+            "Commands: [dim]/exit  /schema  /schema nba  /models  /trace  /last[/dim]",
             border_style="yellow",
         )
     )
+
+
+def _print_schema(settings, arg: str | None = None) -> None:
+    from hornet.db import load_schema_cache, schema_text_detailed
+
+    sports = settings.sports
+    if arg:
+        sports = [s for s in sports if s.id == arg.lower()]
+        if not sports:
+            console.print(f"  [red]Unknown sport:[/red] {arg} (use nba, nfl, nhl)")
+            return
+
+    for sport in sports:
+        exists = sport.database.exists()
+        status = "ok" if exists else "missing db"
+        console.print(f"  [bold]{sport.id}[/bold] — {sport.database} ({status})")
+        if not exists:
+            continue
+        cache = load_schema_cache(settings.schema_cache_dir / f"{sport.id}.json")
+        if not cache or not cache.get("exists"):
+            console.print("    [dim]no schema cache — rebuilding…[/dim]")
+            continue
+        tables = cache.get("tables", {})
+        console.print(f"    tables ({len(tables)}): {', '.join(tables.keys())}")
+        if arg:
+            console.print()
+            console.print(schema_text_detailed(cache))
+        else:
+            for tname, meta in tables.items():
+                cols = ", ".join(c["name"] for c in meta["columns"])
+                console.print(f"    [cyan]{tname}[/cyan] ({meta['row_count']} rows): {cols}")
 
 
 def main() -> None:
@@ -50,7 +81,14 @@ def main() -> None:
         console.print("[red]Ollama is not reachable.[/red] Start it with: [bold]ollama serve[/bold]")
         sys.exit(1)
 
-    build_all_schema_caches(settings)
+    caches = build_all_schema_caches(settings)
+    for sport_id, schema in caches.items():
+        if schema.get("exists"):
+            n = len(schema.get("tables", {}))
+            console.print(f"[dim]schema cache {sport_id}: {n} table(s)[/dim]")
+        else:
+            console.print(f"[yellow]schema cache {sport_id}: database missing[/yellow]")
+
     orchestrator = Orchestrator(settings)
     session = Session()
     trace_mode = True
@@ -58,7 +96,8 @@ def main() -> None:
     prompt_session = PromptSession(history=FileHistory(str(history_path)))
 
     _banner(settings)
-    console.print("[dim]Agent trace is ON — use /trace to toggle. Use /last to replay the last trace.[/dim]\n")
+    console.print("[dim]Agent trace is ON — use /trace to toggle. Use /last to replay the last trace.[/dim]")
+    console.print("[dim]/schema shows all tables/columns; /schema nba (or nfl/nhl) for full detail.[/dim]\n")
 
     while True:
         try:
@@ -71,10 +110,9 @@ def main() -> None:
             continue
         if text in {"/exit", "/quit", "exit", "quit"}:
             break
-        if text == "/schema":
-            for sport in settings.sports:
-                exists = "ok" if sport.database.exists() else "missing db"
-                console.print(f"  [bold]{sport.id}[/bold] — {sport.database} ({exists})")
+        if text == "/schema" or text.startswith("/schema "):
+            arg = text[len("/schema") :].strip() or None
+            _print_schema(settings, arg)
             continue
         if text == "/models":
             for name in client.list_models():
