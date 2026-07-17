@@ -1,4 +1,8 @@
-"""Human-readable schema hints injected into the SQL agent."""
+"""Human-readable schema hints injected into the SQL agent.
+
+Hints below match the production HORNET DBs (player box + MVP fields on NBA,
+Pro-Football-Reference style NFL splits, hockey-reference NHL).
+"""
 
 from __future__ import annotations
 
@@ -6,26 +10,29 @@ from typing import Any
 
 SPORT_HINTS: dict[str, str] = {
     "nba": """\
-NBA (player_mvp_stats) — MVP ballot + per-game box stats for nominees, NOT the full league:
-- pts = points PER GAME (scoring leaders)
-- pts_max / pts_won = MVP VOTING points (NOT scoring)
-- Percent columns (*_pct) are percentages — NOT makes
-- For threes MADE / 3PM: use the live threes-made column from the schema below if present
-  (often c_3p, fg3, x3p, etc.). Never invent COUNT(*) or pts>=3 as a substitute.
-- year = season end year (2024 = 2023-24)""",
+NBA table player_mvp_stats (per-player season rows; includes MVP vote fields):
+- Scoring: pts = points PER GAME (not season totals)
+- Shooting makes/attempts: fg/fga, c_2p/c_2pa, c_3p/c_3pa, ft/fta
+- THREE-POINTERS MADE = c_3p ; attempts = c_3pa ; pct = c_3p_pct
+  For "most threes made" / 3PM leaders: ORDER BY c_3p DESC — never COUNT(*) or pts>=3
+- Other box: trb, orb, drb, ast, stl, blk, tov, mp, g, gs, efg_pct
+- MVP voting only: pts_won, pts_max, share (NOT scoring)
+- Team fields: tm and/or team; year = season end year (2024 = 2023-24)
+- Use ONLY columns listed in the live schema""",
     "nfl": """\
-NFL — pick the table that matches the stat:
-- passing: yds=passing yards, td=passing TDs, cmp, att, rate
-- rushing_and_receiving: rushing_yds, receiving_yds, rushing_td, receiving_rec
-- defense: tackles/sacks/interceptions columns as listed in schema
-- Use ONLY column names from the schema block
-- year = season year""",
+NFL — use the table that matches the ask (regular season unless question says playoffs/*_post):
+- passing: yds=passing yards, td=passing TDs, cmp, att, rate, int
+- rushing_and_receiving: rushing_yds, rushing_td, rushing_att, receiving_yds, receiving_rec, receiving_td
+- defense: sk=sacks, tackles_comb/tackles_solo/tackles_ast, def_interceptions_int (NOT a column named sacks/tackles/interceptions)
+- kicking: scoring_fgm/scoring_fga, scoring_xpm/scoring_xpa
+- scoring: pts, touchdowns_*; games / team_stats for team-level
+- year, team, player on player tables
+- Use ONLY columns listed in the live schema""",
     "nhl": """\
-NHL (player_team_stats):
-- g = GOALS (not games); player_gp = games played; player_pts = points
-- a = assists; team / team_full as listed
-- year = season end year
-- Use ONLY column names from the schema block""",
+NHL table player_team_stats:
+- g = GOALS (not games); a = assists; player_pts = points; player_gp = games played
+- team = abbrev; team_full = full name; year = season end year
+- Use ONLY columns listed in the live schema""",
 }
 
 
@@ -53,11 +60,20 @@ def dynamic_hints(sport: str, schema: dict[str, Any]) -> str:
     made = threes_made_column(all_cols)
     pct = threes_pct_column(all_cols)
     if made:
-        lines.append(f"THREE-POINT MAKES column: {made} — use this for 'threes made' / 3PM leaders.")
+        lines.append(f"THREE-POINT MAKES column: {made} — use for 'threes made' / 3PM leaders.")
+    if "c_3pa" in all_cols:
+        lines.append("THREE-POINT ATTEMPTS column: c_3pa")
     if pct:
         lines.append(f"THREE-POINT PCT column: {pct} — percentage only, not makes.")
     if sport == "nba" and pct and not made:
         lines.append("WARNING: 3P% exists but no threes-made column was detected.")
+    if sport == "nfl":
+        if "sk" in all_cols:
+            lines.append("NFL sacks column: sk (not 'sacks').")
+        if "tackles_comb" in all_cols:
+            lines.append("NFL tackles: tackles_comb / tackles_solo / tackles_ast.")
+        if "def_interceptions_int" in all_cols:
+            lines.append("NFL interceptions: def_interceptions_int.")
 
     lines.append("If the question needs a column not listed above, output UNSUPPORTED.")
     return "\n".join(lines)

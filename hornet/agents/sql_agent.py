@@ -208,6 +208,17 @@ class SQLAgent:
 
         if sport == "nfl":
             if (
+                re.search(r"\b(sack|sacks)\b", q)
+                and has("player", "year")
+                and ("sk" in cols or "sacks" in cols)
+            ):
+                sack_col = "sk" if "sk" in cols else "sacks"
+                team = ", team" if "team" in cols else ""
+                return (
+                    f"SELECT player{team}, {sack_col} FROM defense "
+                    f"WHERE year = {year} ORDER BY {sack_col} DESC LIMIT {limit}"
+                )
+            if (
                 re.search(r"\b(pass(ing)?|quarterback|\bqb\b)\b", q)
                 and re.search(r"\b(yard|yards|yds)\b", q)
                 and has("player", "yds", "year")
