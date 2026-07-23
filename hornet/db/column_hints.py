@@ -16,7 +16,10 @@ NBA table player_mvp_stats (per-player season rows; includes MVP vote fields):
 - THREE-POINTERS MADE = c_3p ; attempts = c_3pa ; pct = c_3p_pct
   For "most threes made" / 3PM leaders: ORDER BY c_3p DESC — never COUNT(*) or pts>=3
 - Other box: trb, orb, drb, ast, stl, blk, tov, mp, g, gs, efg_pct
-- MVP voting only: pts_won, pts_max, share (NOT scoring)
+- awards = award abbreviations for that season (MVP, DPOY, ROY, AS, etc.)
+  For award winners: WHERE awards IS NOT NULL AND awards != '' ; filter with LIKE '%MVP%'
+- MVP voting: pts_won, pts_max, share (NOT scoring) — ORDER BY share DESC for MVP race
+- Named player lookup: WHERE player LIKE '%Name%' AND year = …
 - Team fields: tm and/or team; year = season end year (2024 = 2023-24)
 - Use ONLY columns listed in the live schema""",
     "nfl": """\
@@ -27,10 +30,13 @@ NFL — use the table that matches the ask (regular season unless question says 
 - kicking: scoring_fgm/scoring_fga, scoring_xpm/scoring_xpa
 - scoring: pts, touchdowns_*; games / team_stats for team-level
 - year, team, player on player tables
+- awards column on many player tables when present
+- Named player lookup: WHERE player LIKE '%Name%' AND year = …
 - Use ONLY columns listed in the live schema""",
     "nhl": """\
 NHL table player_team_stats:
 - g = GOALS (not games); a = assists; player_pts = points; player_gp = games played
+- awards = award abbreviations when present; Named player: WHERE player LIKE '%Name%'
 - team = abbrev; team_full = full name; year = season end year
 - Use ONLY columns listed in the live schema""",
 }

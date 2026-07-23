@@ -91,7 +91,11 @@ def _extract_limit(question: str, default: int = 5) -> int:
 
 
 def sport_sub_question(sport: str, question: str) -> str:
-    """Focused sub-question per sport for multi-step / cross-sport plans."""
+    """Focused leaderboard sub-question for cross-sport compare plans only.
+
+    Do not use this for single-sport asks — it would discard player names,
+    awards, and other non-scoring intent.
+    """
     q = question.lower()
     year = _extract_year(question)
     n = _extract_limit(question)
@@ -123,9 +127,10 @@ def build_data_plan(question: str) -> Plan | None:
         return None
 
     q = question.lower()
-    compare = any(w in q for w in ("compare", "versus", " vs ", "better", "difference", "how do"))
     deep_stats = any(w in q for w in ("correlation", "regression", "statistical analysis", "explain why"))
 
+    # Cross-sport: rewrite each leg to a comparable leaderboard metric.
+    # Single-sport: keep the user's question intact (player/awards/etc.).
     if len(sports) >= 2:
         steps = [
             PlanStep("sql_query", {"sport": sport, "question": sport_sub_question(sport, question)})
@@ -134,7 +139,7 @@ def build_data_plan(question: str) -> Plan | None:
         return Plan(mode="data", steps=steps, needs_stats_narrative=deep_stats)
 
     sport = sports[0]
-    steps = [PlanStep("sql_query", {"sport": sport, "question": sport_sub_question(sport, question)})]
+    steps = [PlanStep("sql_query", {"sport": sport, "question": question})]
     return Plan(mode="data", steps=steps, needs_stats_narrative=deep_stats)
 
 

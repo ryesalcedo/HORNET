@@ -9,6 +9,7 @@ import pytest
 from hornet.agents.sql_agent import SQLAgent
 from hornet.db.connection import execute_query
 from tests.fixtures.build_sports_dbs import (
+    NBA_2006_MVP,
     NBA_2016_THREES_LEADER,
     NBA_2024_SCORING_LEADER,
     NFL_2023_PASSING_LEADER,
@@ -69,6 +70,26 @@ def test_fast_path_nba_threes_made(sql_agent: SQLAgent, settings):
     result = execute_query(settings.db_path("nba"), sql)
     assert result["rows"][0]["player"] == NBA_2016_THREES_LEADER[0]
     assert float(result["rows"][0]["c_3p"]) == pytest.approx(NBA_2016_THREES_LEADER[1])
+
+
+def test_fast_path_named_player_lookup(sql_agent: SQLAgent, settings):
+    sql = sql_agent._generate("nba", "How did Steve Nash do in the NBA in 2006?")
+    assert "like '%steve nash%'" in sql.lower() or "like '%Steve Nash%'" in sql
+    assert "year = 2006" in sql
+    result = execute_query(settings.db_path("nba"), sql)
+    assert result["rows"]
+    assert result["rows"][0]["player"] == NBA_2006_MVP[0]
+    assert float(result["rows"][0]["pts"]) == pytest.approx(NBA_2006_MVP[1])
+
+
+def test_fast_path_nba_mvp_awards(sql_agent: SQLAgent, settings):
+    sql = sql_agent._generate("nba", "Who won MVP in the NBA in 2006?")
+    assert "awards" in sql.lower()
+    assert "year = 2006" in sql
+    result = execute_query(settings.db_path("nba"), sql)
+    assert result["rows"]
+    assert any(r["player"] == NBA_2006_MVP[0] for r in result["rows"])
+    assert any("MVP" in str(r.get("awards", "")) for r in result["rows"])
 
 
 def test_threes_made_unsupported_without_column(settings):

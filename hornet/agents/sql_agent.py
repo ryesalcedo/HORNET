@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 SQL_PREFIX = """You are SQLCoder. Output ONE SQLite SELECT statement.
 The LIVE SCHEMA block lists every real table and column — use ONLY those names.
 Never invent columns. Never substitute a different metric for a missing one.
+For named players: WHERE player LIKE '%Name%' AND year = …
+For award winners: filter the awards column (LIKE '%MVP%') or ORDER BY share/pts_won for MVP votes.
 Prefer simple SELECT … WHERE year = … ORDER BY <metric> DESC LIMIT N for leader questions.
 If the schema cannot answer the question, output exactly: UNSUPPORTED
 No markdown."""
@@ -101,6 +103,172 @@ class SQLAgent:
     def _threes_made_column(columns: set[str]) -> str | None:
         return threes_made_column(columns)
 
+    _PLAYER_STOPWORDS = frozenset(
+        {
+            "nba",
+            "nfl",
+            "nhl",
+            "the",
+            "a",
+            "an",
+            "in",
+            "on",
+            "for",
+            "of",
+            "and",
+            "or",
+            "who",
+            "what",
+            "when",
+            "where",
+            "how",
+            "did",
+            "do",
+            "does",
+            "was",
+            "were",
+            "is",
+            "are",
+            "about",
+            "stats",
+            "stat",
+            "statistics",
+            "info",
+            "information",
+            "player",
+            "players",
+            "team",
+            "teams",
+            "season",
+            "year",
+            "league",
+            "most",
+            "top",
+            "best",
+            "highest",
+            "leading",
+            "leader",
+            "leaders",
+            "points",
+            "point",
+            "yards",
+            "yard",
+            "goals",
+            "goal",
+            "assists",
+            "assist",
+            "mvp",
+            "award",
+            "awards",
+            "winner",
+            "winners",
+            "won",
+            "tell",
+            "me",
+            "show",
+            "give",
+            "with",
+            "his",
+            "her",
+            "their",
+            "from",
+            "by",
+            "per",
+            "game",
+            "games",
+            "vs",
+            "versus",
+            "compare",
+            "basketball",
+            "football",
+            "hockey",
+            "passing",
+            "rushing",
+            "receiving",
+            "scoring",
+            "defense",
+            "please",
+            "look",
+            "up",
+            "get",
+            "find",
+            "had",
+            "have",
+            "has",
+            "many",
+            "much",
+            "all",
+            "any",
+            "some",
+            "this",
+            "that",
+            "those",
+            "these",
+            "which",
+            "total",
+            "average",
+            "avg",
+            "ppg",
+            "made",
+            "threes",
+            "three",
+            "pointers",
+            "sacks",
+            "sack",
+            "touchdowns",
+            "touchdown",
+            "tds",
+            "td",
+            "roy",
+            "dpoy",
+            "allstar",
+            "postseason",
+            "playoffs",
+            "playoff",
+            "regular",
+        }
+    )
+
+    @classmethod
+    def _extract_named_player(cls, question: str) -> str | None:
+        """Best-effort extraction of a 2–4 token person name from the question."""
+        tokens = re.findall(r"[A-Za-z']+", question)
+        i = 0
+        while i < len(tokens):
+            if tokens[i].lower() in cls._PLAYER_STOPWORDS:
+                i += 1
+                continue
+            run: list[str] = []
+            j = i
+            while (
+                j < len(tokens)
+                and tokens[j].lower() not in cls._PLAYER_STOPWORDS
+                and not tokens[j].isdigit()
+            ):
+                run.append(tokens[j])
+                j += 1
+            if 2 <= len(run) <= 4:
+                return " ".join(run)
+            i = j if j > i else i + 1
+        return None
+
+    @staticmethod
+    def _primary_table(sport: str, cache: dict[str, Any]) -> str | None:
+        tables = cache.get("tables") or {}
+        if sport == "nba" and "player_mvp_stats" in tables:
+            return "player_mvp_stats"
+        if sport == "nhl" and "player_team_stats" in tables:
+            return "player_team_stats"
+        if sport == "nfl":
+            return None
+        for name in tables:
+            return name
+        return None
+
+    @staticmethod
+    def _sql_like_name(name: str) -> str:
+        return name.replace("'", "''")
+
     @classmethod
     def _unsupported_reason(cls, sport: str, question: str, cache: dict[str, Any]) -> str | None:
         cols = all_columns(cache)
@@ -159,9 +327,83 @@ class SQLAgent:
         def has(*names: str) -> bool:
             return all(n in cols for n in names)
 
+        named = SQLAgent._extract_named_player(question)
+        awards_ask = bool(
+            re.search(
+                r"\b(award|awards|mvp|roy|dpoy|all[- ]?star|winner|winners)\b",
+                q,
+            )
+        )
         leaderish = bool(
             re.search(r"\b(most|highest|leading|leader|top|best|who led|who had)\b", q)
         )
+
+        # Named player season lookup (before leaderboard patterns)
+        if named and year and has("player", "year"):
+            table = SQLAgent._primary_table(sport, cache)
+            if sport == "nfl":
+                # Prefer the split that matches the ask; default to scoring for general lookups
+                if re.search(r"\b(pass|qb|quarterback)\b", q) and "passing" in (cache.get("tables") or {}):
+                    table = "passing"
+                elif re.search(r"\b(rush|receiv)\b", q) and "rushing_and_receiving" in (
+                    cache.get("tables") or {}
+                ):
+                    table = "rushing_and_receiving"
+                elif "scoring" in (cache.get("tables") or {}):
+                    table = "scoring"
+                elif "passing" in (cache.get("tables") or {}):
+                    table = "passing"
+            if table:
+                like = SQLAgent._sql_like_name(named)
+                select_bits = ["player"]
+                if "year" in cols:
+                    select_bits.append("year")
+                for c in ("team", "team_full", "tm", "pos", "awards", "pts", "player_pts", "g", "player_gp"):
+                    if c in cols and c not in select_bits:
+                        select_bits.append(c)
+                # Keep the row useful without dumping every column
+                select_cols = ", ".join(select_bits[:10])
+                return (
+                    f"SELECT {select_cols} FROM {table} "
+                    f"WHERE player LIKE '%{like}%' AND year = {year}"
+                )
+
+        # Awards / MVP race (no specific player name)
+        if awards_ask and year and not named:
+            table = SQLAgent._primary_table(sport, cache)
+            if sport == "nba" and table:
+                mvpish = bool(re.search(r"\bmvp\b", q))
+                if "awards" in cols and not re.search(r"\b(vote|share|pts_won)\b", q):
+                    select_cols = "player, awards"
+                    for c in ("pts", "share", "pts_won", "team", "tm"):
+                        if c in cols:
+                            select_cols += f", {c}"
+                    where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
+                    if mvpish:
+                        where += " AND awards LIKE '%MVP%'"
+                    return (
+                        f"SELECT {select_cols} FROM {table} WHERE {where} "
+                        f"ORDER BY player LIMIT {max(limit, 25)}"
+                    )
+                if has("share") or has("pts_won"):
+                    order = "share" if "share" in cols else "pts_won"
+                    bits = ["player"]
+                    for c in ("share", "pts_won", "pts_max", "awards", "pts", "team", "tm"):
+                        if c in cols:
+                            bits.append(c)
+                    return (
+                        f"SELECT {', '.join(bits)} FROM {table} "
+                        f"WHERE year = {year} ORDER BY {order} DESC LIMIT {limit}"
+                    )
+            if sport in {"nfl", "nhl"} and table and "awards" in cols:
+                where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
+                if re.search(r"\bmvp\b", q):
+                    where += " AND awards LIKE '%MVP%'"
+                return (
+                    f"SELECT player, awards FROM {table} WHERE {where} "
+                    f"ORDER BY player LIMIT {max(limit, 25)}"
+                )
+
         if strict and not leaderish:
             return None
 

@@ -14,6 +14,7 @@ YEAR_END = 2026
 # Deterministic expected leaders used by tests
 NBA_2024_SCORING_LEADER = ("Nikola Jokic", 35.1)
 NBA_2016_THREES_LEADER = ("Stephen Curry", 5.1)
+NBA_2006_MVP = ("Steve Nash", 18.8)
 NFL_2023_RUSHING_LEADER = ("Christian McCaffrey", 1459.0)
 NFL_2023_PASSING_LEADER = ("Tua Tagovailoa", 4624.0)
 NHL_2023_POINTS_LEADER = ("Connor McDavid", 153)
@@ -53,7 +54,8 @@ def build_nba(db_path: Path) -> Path:
             c_3p_pct REAL,
             ft_pct REAL,
             ws REAL,
-            ws_48 REAL
+            ws_48 REAL,
+            awards TEXT
         )
         """
     )
@@ -86,6 +88,7 @@ def build_nba(db_path: Path) -> Path:
                     0.80,
                     5.0 + i,
                     0.15,
+                    "",
                 )
             )
         if year == 2024:
@@ -113,6 +116,7 @@ def build_nba(db_path: Path) -> Path:
                     0.82,
                     17.0,
                     0.30,
+                    "MVP",
                 )
             )
         if year == 2016:
@@ -140,6 +144,35 @@ def build_nba(db_path: Path) -> Path:
                     0.91,
                     15.0,
                     0.28,
+                    "",
+                )
+            )
+        if year == 2006:
+            name, pts = NBA_2006_MVP
+            rows.append(
+                (
+                    name,
+                    year,
+                    32,
+                    "PHO",
+                    65.0,
+                    950.0,
+                    1000.0,
+                    0.95,
+                    79,
+                    35.4,
+                    pts,
+                    4.2,
+                    10.5,
+                    0.8,
+                    0.2,
+                    0.51,
+                    1.9,
+                    0.44,
+                    0.92,
+                    12.4,
+                    0.21,
+                    "MVP",
                 )
             )
 
@@ -147,8 +180,8 @@ def build_nba(db_path: Path) -> Path:
         """
         INSERT INTO player_mvp_stats (
             player, year, age, team, first_place, pts_won, pts_max, share,
-            g, mp, pts, trb, ast, stl, blk, fg_pct, c_3p, c_3p_pct, ft_pct, ws, ws_48
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            g, mp, pts, trb, ast, stl, blk, fg_pct, c_3p, c_3p_pct, ft_pct, ws, ws_48, awards
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         rows,
     )
