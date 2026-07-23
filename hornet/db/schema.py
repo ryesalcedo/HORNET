@@ -39,10 +39,17 @@ def introspect_database(db_path: Path) -> dict[str, Any]:
                 qcol = _quote_ident(col_name)
                 samples: list[Any] = []
                 try:
-                    sample_rows = conn.execute(
-                        f"SELECT DISTINCT {qcol} AS v FROM {qname} "
-                        f"WHERE {qcol} IS NOT NULL LIMIT 5"
-                    ).fetchall()
+                    # High-cardinality name columns: random examples only (not exhaustive)
+                    if col_name.lower() in {"player", "team", "team_full", "tm"}:
+                        sample_rows = conn.execute(
+                            f"SELECT DISTINCT {qcol} AS v FROM {qname} "
+                            f"WHERE {qcol} IS NOT NULL ORDER BY RANDOM() LIMIT 5"
+                        ).fetchall()
+                    else:
+                        sample_rows = conn.execute(
+                            f"SELECT DISTINCT {qcol} AS v FROM {qname} "
+                            f"WHERE {qcol} IS NOT NULL LIMIT 5"
+                        ).fetchall()
                     samples = [r["v"] for r in sample_rows]
                 except sqlite3.Error:
                     samples = []
@@ -54,6 +61,8 @@ def introspect_database(db_path: Path) -> dict[str, Any]:
                     "pk": bool(c["pk"]),
                     "samples": samples,
                 }
+                if col_name.lower() in {"player", "team", "team_full", "tm"} and samples:
+                    entry["samples_note"] = "examples only; not exhaustive"
                 if col_name.lower() == "year":
                     try:
                         yr = conn.execute(
@@ -193,7 +202,8 @@ def schema_text_sql(
                 extra = f"  -- year range {c['min']}..{c['max']}"
             elif c.get("samples"):
                 samples = ", ".join(repr(s) for s in c["samples"][:3])
-                extra = f"  -- e.g. {samples}"
+                note = " examples only" if c.get("samples_note") else ""
+                extra = f"  -- e.g. {samples}{note}"
             lines.append(f"  {c['name']} {c.get('type') or 'ANY'}{extra}")
     return "\n".join(lines)
 

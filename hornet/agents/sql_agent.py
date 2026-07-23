@@ -9,11 +9,13 @@ from hornet.db.column_hints import dynamic_hints
 from hornet.db import load_schema_cache
 from hornet.db.connection import execute_query
 from hornet.db.shooting_cols import threes_made_column, threes_pct_column
+from hornet.db.team_aliases import extract_team
 from hornet.db.schema import (
     all_columns,
     explain_select,
     nfl_tables_for_question,
     schema_text_sql,
+    table_columns,
     validate_sql_against_schema,
 )
 from hornet.llm.model_manager import ModelManager
@@ -163,6 +165,7 @@ class SQLAgent:
             "winner",
             "winners",
             "won",
+            "win",
             "tell",
             "me",
             "show",
@@ -221,17 +224,83 @@ class SQLAgent:
             "td",
             "roy",
             "dpoy",
+            "6moy",
+            "mip",
+            "sixth",
+            "man",
+            "defensive",
+            "rookie",
+            "improved",
             "allstar",
             "postseason",
             "playoffs",
             "playoff",
             "regular",
+            "record",
+            "career",
+            "seasons",
+            "years",
+            "suns",
+            "lakers",
+            "chiefs",
+            "leafs",
+            "maple",
         }
     )
+
+    @staticmethod
+    def _award_code(question: str) -> str | None:
+        q = question.lower()
+        if re.search(r"\b6moy\b|sixth\s*man|6th\s*man", q):
+            return "6MOY"
+        if re.search(r"\bdpoy\b|defensive player", q):
+            return "DPOY"
+        if re.search(r"\broy\b|rookie of the year", q):
+            return "ROY"
+        if re.search(r"\bmip\b|most improved", q):
+            return "MIP"
+        if re.search(r"\bmvp\b", q):
+            return "MVP"
+        return None
+
+    @staticmethod
+    def _award_winner_clause(code: str) -> str:
+        """Match CODE-1 winner tokens without matching CODE-10/11/..."""
+        return (
+            f"(awards = '{code}-1' OR awards LIKE '{code}-1,%' "
+            f"OR awards LIKE '%,{code}-1,%' OR awards LIKE '%,{code}-1')"
+        )
+
+    @staticmethod
+    def _team_where(sport: str, abbrev: str | None, like_frag: str, cols: set[str]) -> str:
+        like = SQLAgent._sql_like_name(like_frag)
+        parts: list[str] = []
+        if abbrev and "tm" in cols:
+            parts.append(f"tm = '{SQLAgent._sql_like_name(abbrev)}'")
+        if abbrev and "team" in cols:
+            parts.append(f"team = '{SQLAgent._sql_like_name(abbrev)}'")
+            parts.append(f"team LIKE '%{SQLAgent._sql_like_name(abbrev)}%'")
+        if "team_full" in cols:
+            parts.append(f"team_full LIKE '%{like}%'")
+        if "team" in cols:
+            parts.append(f"team LIKE '%{like}%'")
+        # de-dupe while preserving order
+        seen: set[str] = set()
+        uniq = []
+        for p in parts:
+            if p not in seen:
+                seen.add(p)
+                uniq.append(p)
+        return "(" + " OR ".join(uniq) + ")" if uniq else "1=1"
 
     @classmethod
     def _extract_named_player(cls, question: str) -> str | None:
         """Best-effort extraction of a 2–4 token person name from the question."""
+        # Prefer team aliases over misreading franchise names as players
+        for sport in ("nba", "nfl", "nhl"):
+            if extract_team(sport, question):
+                # Still allow a person name if present alongside a team
+                break
         tokens = re.findall(r"[A-Za-z']+", question)
         i = 0
         while i < len(tokens):
@@ -248,7 +317,12 @@ class SQLAgent:
                 run.append(tokens[j])
                 j += 1
             if 2 <= len(run) <= 4:
-                return " ".join(run)
+                candidate = " ".join(run)
+                # Reject if the span is (part of) a known team alias
+                if any(extract_team(s, candidate) for s in ("nba", "nfl", "nhl")):
+                    i = j if j > i else i + 1
+                    continue
+                return candidate
             i = j if j > i else i + 1
         return None
 
@@ -318,8 +392,6 @@ class SQLAgent:
         q = question.lower()
         year_match = re.search(r"\b((?:19|20)\d{2})\b", q)
         year = year_match.group(1) if year_match else None
-        if not year:
-            return None
 
         limit = SQLAgent._limit(question)
         cols = all_columns(cache)
@@ -328,22 +400,107 @@ class SQLAgent:
             return all(n in cols for n in names)
 
         named = SQLAgent._extract_named_player(question)
-        awards_ask = bool(
-            re.search(
-                r"\b(award|awards|mvp|roy|dpoy|all[- ]?star|winner|winners)\b",
-                q,
-            )
+        award_code = SQLAgent._award_code(question)
+        awards_ask = bool(award_code) or bool(
+            re.search(r"\b(award|awards|all[- ]?star|winner|winners)\b", q)
         )
         leaderish = bool(
             re.search(r"\b(most|highest|leading|leader|top|best|who led|who had)\b", q)
         )
+        careerish = bool(
+            re.search(
+                r"\b(career|all[- ]time|mvp seasons|mvp years|which years|"
+                r"how many (mvps?|awards)|every season|all seasons)\b",
+                q,
+            )
+        )
+        # Year required for leaderboards/awards season asks; career named-player can omit it
+        if not year and not (named and (careerish or awards_ask)):
+            return None
+
+        team_hit = extract_team(sport, question)
+        wonish = bool(re.search(r"\b(won|win|winner|who won)\b", q))
+
+        # Team record / team leaders (before player-name heuristics)
+        if team_hit and (year or not careerish):
+            abbrev, like_frag = team_hit
+            team_filter = SQLAgent._team_where(sport, abbrev, like_frag, cols)
+            table = SQLAgent._primary_table(sport, cache)
+            if sport == "nfl":
+                if re.search(r"\b(pass(?:ing)?|qb|quarterback)\b", q) and "passing" in (cache.get("tables") or {}):
+                    table = "passing"
+                elif re.search(r"\b(rush|receiv)\b", q) and "rushing_and_receiving" in (
+                    cache.get("tables") or {}
+                ):
+                    table = "rushing_and_receiving"
+                elif "team_stats" in (cache.get("tables") or {}) and re.search(
+                    r"\b(record|team stats|wins?|losses?)\b", q
+                ):
+                    table = "team_stats"
+                elif "scoring" in (cache.get("tables") or {}):
+                    table = "scoring"
+            if table and year:
+                tcols = table_columns(cache, table)
+                recordish = bool(
+                    re.search(r"\b(record|wins?|losses?|wl_pct|team stats|how did the)\b", q)
+                ) and not leaderish and not named
+                if recordish and {"w", "l"} <= tcols:
+                    bits = [c for c in ("team", "tm", "team_full", "year", "w", "l", "wl_pct") if c in tcols]
+                    return (
+                        f"SELECT DISTINCT {', '.join(bits)} FROM {table} "
+                        f"WHERE year = {year} AND {team_filter} LIMIT 5"
+                    )
+                metric = None
+                if sport == "nba" and "pts" in tcols:
+                    metric = "pts"
+                elif sport == "nhl" and "player_pts" in tcols:
+                    metric = "player_pts"
+                elif sport == "nfl" and table == "passing" and "yds" in tcols:
+                    metric = "yds"
+                elif sport == "nfl" and table == "rushing_and_receiving":
+                    if "rush" in q and "rushing_yds" in tcols:
+                        metric = "rushing_yds"
+                    elif "receiv" in q and "receiving_yds" in tcols:
+                        metric = "receiving_yds"
+                bits = ["player"] if "player" in tcols else []
+                for c in ("team", "team_full", "tm", "pts", "player_pts", "yds", "rushing_yds", "receiving_yds", "g", "player_gp"):
+                    if c in tcols and c not in bits:
+                        bits.append(c)
+                if not bits:
+                    return None
+                select_cols = ", ".join(bits[:8])
+                order = f" ORDER BY {metric} DESC" if metric else ""
+                return (
+                    f"SELECT {select_cols} FROM {table} "
+                    f"WHERE year = {year} AND {team_filter}{order} LIMIT {limit}"
+                )
+
+        # Named player career / multi-year (no single season year required)
+        if named and has("player", "year") and (careerish or (not year and awards_ask)):
+            table = SQLAgent._primary_table(sport, cache)
+            if table:
+                like = SQLAgent._sql_like_name(named)
+                bits = ["player", "year"]
+                for c in ("team", "tm", "team_full", "awards", "pts", "player_pts", "share", "pts_won"):
+                    if c in cols and c not in bits:
+                        bits.append(c)
+                where = f"player LIKE '%{like}%'"
+                if award_code and "awards" in cols:
+                    if wonish:
+                        where += f" AND {SQLAgent._award_winner_clause(award_code)}"
+                    else:
+                        where += f" AND awards LIKE '%{award_code}%'"
+                return (
+                    f"SELECT {', '.join(bits[:10])} FROM {table} "
+                    f"WHERE {where} ORDER BY year"
+                )
 
         # Named player season lookup (before leaderboard patterns)
         if named and year and has("player", "year"):
             table = SQLAgent._primary_table(sport, cache)
             if sport == "nfl":
                 # Prefer the split that matches the ask; default to scoring for general lookups
-                if re.search(r"\b(pass|qb|quarterback)\b", q) and "passing" in (cache.get("tables") or {}):
+                if re.search(r"\b(pass(?:ing)?|qb|quarterback)\b", q) and "passing" in (cache.get("tables") or {}):
                     table = "passing"
                 elif re.search(r"\b(rush|receiv)\b", q) and "rushing_and_receiving" in (
                     cache.get("tables") or {}
@@ -368,47 +525,40 @@ class SQLAgent:
                     f"WHERE player LIKE '%{like}%' AND year = {year}"
                 )
 
-        # Awards / MVP race (no specific player name)
+        # Awards / MVP/DPOY/ROY/6MOY (no specific player name)
         if awards_ask and year and not named:
             table = SQLAgent._primary_table(sport, cache)
-            if sport == "nba" and table:
-                mvpish = bool(re.search(r"\bmvp\b", q))
-                won_mvp = mvpish and bool(
-                    re.search(r"\b(won|winner|who won)\b", q)
-                )
-                if "awards" in cols and not re.search(r"\b(vote|share|pts_won)\b", q):
-                    select_cols = "player, awards"
-                    for c in ("pts", "share", "pts_won", "team", "tm"):
-                        if c in cols:
-                            select_cols += f", {c}"
-                    where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
-                    if won_mvp:
-                        # Prefer outright MVP (MVP-1), not MVP-10 vote crumbs
-                        where += (
-                            " AND (awards = 'MVP-1' OR awards LIKE 'MVP-1,%' "
-                            "OR awards LIKE '%,MVP-1,%' OR awards LIKE '%,MVP-1')"
-                        )
-                    elif mvpish:
+            if sport == "nba" and table and "awards" in cols:
+                select_cols = "player, awards"
+                for c in ("pts", "share", "pts_won", "team", "tm"):
+                    if c in cols:
+                        select_cols += f", {c}"
+                where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
+                if award_code:
+                    if wonish or award_code != "MVP":
+                        # Specific award asks default to the -1 winner (or shortlist)
+                        where += f" AND {SQLAgent._award_winner_clause(award_code)}"
+                    else:
                         where += " AND awards LIKE '%MVP%'"
-                    order = "share DESC, player" if "share" in cols else "player"
-                    return (
-                        f"SELECT {select_cols} FROM {table} WHERE {where} "
-                        f"ORDER BY {order} LIMIT {max(limit, 25)}"
-                    )
-                if has("share") or has("pts_won"):
-                    order = "share" if "share" in cols else "pts_won"
-                    bits = ["player"]
-                    for c in ("share", "pts_won", "pts_max", "awards", "pts", "team", "tm"):
-                        if c in cols:
-                            bits.append(c)
-                    return (
-                        f"SELECT {', '.join(bits)} FROM {table} "
-                        f"WHERE year = {year} ORDER BY {order} DESC LIMIT {limit}"
-                    )
+                order = "share DESC, player" if "share" in cols and award_code == "MVP" else "player"
+                return (
+                    f"SELECT {select_cols} FROM {table} WHERE {where} "
+                    f"ORDER BY {order} LIMIT {max(limit, 25)}"
+                )
+            if sport == "nba" and table and (has("share") or has("pts_won")):
+                order = "share" if "share" in cols else "pts_won"
+                bits = ["player"]
+                for c in ("share", "pts_won", "pts_max", "awards", "pts", "team", "tm"):
+                    if c in cols:
+                        bits.append(c)
+                return (
+                    f"SELECT {', '.join(bits)} FROM {table} "
+                    f"WHERE year = {year} ORDER BY {order} DESC LIMIT {limit}"
+                )
             if sport in {"nfl", "nhl"} and table and "awards" in cols:
                 where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
-                if re.search(r"\bmvp\b", q):
-                    where += " AND awards LIKE '%MVP%'"
+                if award_code:
+                    where += f" AND {SQLAgent._award_winner_clause(award_code)}"
                 return (
                     f"SELECT player, awards FROM {table} WHERE {where} "
                     f"ORDER BY player LIMIT {max(limit, 25)}"

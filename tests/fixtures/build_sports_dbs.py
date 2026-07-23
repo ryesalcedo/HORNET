@@ -175,6 +175,38 @@ def build_nba(db_path: Path) -> Path:
                     "MVP-1,AS,NBA1",
                 )
             )
+            for extra in (
+                ("Ben Wallace", "DET", "DPOY-1,AS,DEF1", 12.2),
+                ("Chris Paul", "NOP", "ROY-1,AS", 16.1),
+                ("Mike Miller", "MEM", "6MOY-1", 13.7),
+            ):
+                pname, tm, award, ppts = extra
+                rows.append(
+                    (
+                        pname,
+                        year,
+                        28,
+                        tm,
+                        10.0,
+                        50.0,
+                        1000.0,
+                        0.05,
+                        75,
+                        32.0,
+                        ppts,
+                        6.0,
+                        4.0,
+                        1.0,
+                        1.0,
+                        0.45,
+                        1.0,
+                        0.35,
+                        0.80,
+                        8.0,
+                        0.15,
+                        award,
+                    )
+                )
         if year in (2005, 2007):
             name, _pts2006 = NBA_2006_MVP
             share = 0.839 if year == 2005 else 0.785

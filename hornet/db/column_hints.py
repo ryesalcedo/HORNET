@@ -17,10 +17,13 @@ NBA table player_mvp_stats (per-player season rows; includes MVP vote fields):
   For "most threes made" / 3PM leaders: ORDER BY c_3p DESC — never COUNT(*) or pts>=3
 - Other box: trb, orb, drb, ast, stl, blk, tov, mp, g, gs, efg_pct
 - awards = award abbreviations for that season (MVP, DPOY, ROY, AS, etc.)
-  For award winners: WHERE awards IS NOT NULL AND awards != '' ; filter with LIKE '%MVP%'
+  Winners use CODE-1 (MVP-1, DPOY-1, ROY-1, 6MOY-1). Filter carefully — not CODE-10.
+  For award winners: WHERE awards matches CODE-1; for races ORDER BY share/pts_won
 - MVP voting: pts_won, pts_max, share (NOT scoring) — ORDER BY share DESC for MVP race
-- Named player lookup: WHERE player LIKE '%Name%' AND year = …
-- Team fields: tm and/or team; year = season end year (2024 = 2023-24)
+- Named player lookup: WHERE player LIKE '%Name%' AND year = … (omit year for career)
+- Team asks: filter tm / team / team_full (e.g. tm='PHO' OR team LIKE '%Phoenix%')
+- Team fields: tm and/or team; w/l/wl_pct are team season record on player rows
+- year = season end year (2024 = 2023-24)
 - Use ONLY columns listed in the live schema""",
     "nfl": """\
 NFL — use the table that matches the ask (regular season unless question says playoffs/*_post):
