@@ -12,6 +12,7 @@ venv/
 *.db-journal
 data/databases/*.db
 data/schema/*.json
+data/raw/**/*.csv
 .DS_Store
 .pytest_cache/
 .mypy_cache/

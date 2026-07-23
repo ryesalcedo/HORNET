@@ -24,6 +24,7 @@ REQUIRED = {
             "g",
             "c_3p",
             "c_3p_pct",
+            "awards",
         }
     },
     "nfl": {

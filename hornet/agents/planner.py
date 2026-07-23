@@ -77,7 +77,7 @@ def _is_meta_question(text: str) -> bool:
 
 
 def _extract_year(question: str, default: str = "2024") -> str:
-    if m := re.search(r"\b(20\d{2})\b", question):
+    if m := re.search(r"\b((?:19|20)\d{2})\b", question):
         return m.group(1)
     return default
 

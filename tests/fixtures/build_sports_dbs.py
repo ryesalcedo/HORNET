@@ -116,7 +116,7 @@ def build_nba(db_path: Path) -> Path:
                     0.82,
                     17.0,
                     0.30,
-                    "MVP",
+                    "MVP-1,AS,NBA1",
                 )
             )
         if year == 2016:
@@ -144,7 +144,7 @@ def build_nba(db_path: Path) -> Path:
                     0.91,
                     15.0,
                     0.28,
-                    "",
+                    "AS,NBA1",
                 )
             )
         if year == 2006:
@@ -172,7 +172,38 @@ def build_nba(db_path: Path) -> Path:
                     0.92,
                     12.4,
                     0.21,
-                    "MVP",
+                    "MVP-1,AS,NBA1",
+                )
+            )
+        if year in (2005, 2007):
+            name, _pts2006 = NBA_2006_MVP
+            share = 0.839 if year == 2005 else 0.785
+            award = "MVP-1,AS,NBA1" if year == 2005 else "MVP-2,AS,NBA1"
+            pts = 15.5 if year == 2005 else 18.6
+            rows.append(
+                (
+                    name,
+                    year,
+                    31 if year == 2005 else 33,
+                    "PHO",
+                    60.0,
+                    share * 1000,
+                    1000.0,
+                    share,
+                    78,
+                    34.0,
+                    pts,
+                    4.0,
+                    10.0,
+                    0.8,
+                    0.2,
+                    0.50,
+                    1.5,
+                    0.43,
+                    0.90,
+                    11.0,
+                    0.20,
+                    award,
                 )
             )
 

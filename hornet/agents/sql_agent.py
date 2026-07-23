@@ -72,7 +72,7 @@ class SQLAgent:
             q,
         ):
             return True
-        if len(re.findall(r"\b(20\d{2})\b", q)) > 1:
+        if len(re.findall(r"\b((?:19|20)\d{2})\b", q)) > 1:
             return True
         # two distinct leaderboard metrics in one question
         metrics = 0
@@ -316,7 +316,7 @@ class SQLAgent:
         strict=False → recovery path after SQLCoder fails validation
         """
         q = question.lower()
-        year_match = re.search(r"\b(20\d{2})\b", q)
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", q)
         year = year_match.group(1) if year_match else None
         if not year:
             return None
@@ -373,17 +373,27 @@ class SQLAgent:
             table = SQLAgent._primary_table(sport, cache)
             if sport == "nba" and table:
                 mvpish = bool(re.search(r"\bmvp\b", q))
+                won_mvp = mvpish and bool(
+                    re.search(r"\b(won|winner|who won)\b", q)
+                )
                 if "awards" in cols and not re.search(r"\b(vote|share|pts_won)\b", q):
                     select_cols = "player, awards"
                     for c in ("pts", "share", "pts_won", "team", "tm"):
                         if c in cols:
                             select_cols += f", {c}"
                     where = f"year = {year} AND awards IS NOT NULL AND TRIM(awards) != ''"
-                    if mvpish:
+                    if won_mvp:
+                        # Prefer outright MVP (MVP-1), not MVP-10 vote crumbs
+                        where += (
+                            " AND (awards = 'MVP-1' OR awards LIKE 'MVP-1,%' "
+                            "OR awards LIKE '%,MVP-1,%' OR awards LIKE '%,MVP-1')"
+                        )
+                    elif mvpish:
                         where += " AND awards LIKE '%MVP%'"
+                    order = "share DESC, player" if "share" in cols else "player"
                     return (
                         f"SELECT {select_cols} FROM {table} WHERE {where} "
-                        f"ORDER BY player LIMIT {max(limit, 25)}"
+                        f"ORDER BY {order} LIMIT {max(limit, 25)}"
                     )
                 if has("share") or has("pts_won"):
                     order = "share" if "share" in cols else "pts_won"
@@ -437,7 +447,7 @@ class SQLAgent:
 
         if sport == "nba" and has("player", "pts", "year"):
             scoring = bool(
-                re.search(r"\b(ppg|points?\s+per\s+game|scoring)\b", q)
+                re.search(r"\b(ppg|points?\s+per\s+game|scoring|scorers?)\b", q)
                 or re.search(r"\b(most|highest|leading|top)\b.{0,40}\bpoints?\b", q)
                 or re.search(r"\bpoints?\b.{0,40}\b(leader|most|highest)\b", q)
             )
