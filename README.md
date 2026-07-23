@@ -2,6 +2,8 @@
 
 Local multi-agent sports analytics for **NBA**, **NFL**, and **NHL** — terminal-first, powered by Ollama.
 
+**Full how-it-works guide:** [docs/MANUAL.md](docs/MANUAL.md) (question flow, data import, SQL routing, debugging).
+
 ## Architecture (trimmed)
 
 ```
