@@ -149,6 +149,10 @@ That returns **Steve Nash** (`MVP-1,AS,NBA1`).
 Deterministic Python. Used for comparisons / per-game style calcs. No LLM.  
 Often a no-op for simple lookups.
 
+For cross-sport “who is better” asks, math may set `comparable: false` when metrics differ
+(e.g. NBA **points per game** vs NHL **season point totals**). The synthesizer is instructed
+**not** to crown a winner in that case.
+
 ### Step E — SYNTHESIZE (orchestrator + Qwen)
 
 The orchestrator sees:
@@ -319,6 +323,11 @@ The DB always had him (`MVP-1` in 2005–2006). The bug was the pipeline, not th
 | `HORNET_ROOT` | Install root (where `config/` and `data/` live) |
 | `OLLAMA_HOST` | Default `http://localhost:11434` |
 | `OLLAMA_MAX_LOADED_MODELS` | Allow multiple resident models |
+| `HORNET_ORCHESTRATOR_MODEL` / `HORNET_SQL_MODEL` / `HORNET_STATS_MODEL` | Override model names without editing YAML |
+| `HORNET_RESIDENT_MODELS` | `true` / `false` overrides `settings.yaml` |
+| `HORNET_LOG_LEVEL` | e.g. `DEBUG` for more SQL-agent logging |
+
+> Note: `.env.example` may mention `HORNET_DATA_DIR`, but **current code does not read it**. Put DBs under `$HORNET_ROOT/data/databases/` (or change paths in `settings.yaml`).
 
 Pull models:
 
@@ -374,6 +383,8 @@ See [docs/INSTALL.md](INSTALL.md) and [docs/ROCKY_LINUX.md](ROCKY_LINUX.md). Sho
 3. Place DBs or import CSVs  
 4. Pull Ollama models  
 5. `export HORNET_ROOT=…` and run `hornet`
+
+Alternate layouts from installer/bootstrap scripts may use `/opt/hornet/app/HORNET` instead of `/hornet` — always set `HORNET_ROOT` to whichever directory contains `config/settings.yaml`.
 
 ### Update to latest fixes (your live box)
 
